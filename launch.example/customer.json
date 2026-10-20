@@ -1,0 +1,59 @@
+{
+  "product": "A block-coding toy that teaches children to program.",
+  "currency": "TL",
+  "roles": [
+    {
+      "name": "Buying parent",
+      "decision_type": "buyer",
+      "share": 0.4,
+      "age": [
+        30,
+        45
+      ],
+      "income": [
+        60000,
+        120000
+      ],
+      "decision": "You pay for it and decide whether it comes into the house.",
+      "how": "Looks for safety, screen time limits and real learning value. Reads reviews."
+    },
+    {
+      "name": "Child user",
+      "decision_type": "user",
+      "share": 0.4,
+      "age": [
+        7,
+        12
+      ],
+      "income": null,
+      "decision": "Your parent decides. You can ask, you cannot buy it yourself.",
+      "how": "Wants it to be fun and quick to start. Gets bored with slow tutorials."
+    },
+    {
+      "name": "Friend with a child who owns one",
+      "decision_type": "influencer",
+      "share": 0.2,
+      "age": [
+        28,
+        42
+      ],
+      "income": [
+        60000,
+        120000
+      ],
+      "decision": "You do not buy it for your child's friend. Other parents ask you what to get.",
+      "how": "Talks to other parents, trusts what they have seen work at home."
+    }
+  ],
+  "objections": [
+    "Will it add to screen time?",
+    "Is it worth the price for something that might be left in a drawer?",
+    "Will my child get bored after a week?",
+    "How long does the battery last?"
+  ],
+  "habits": [
+    "plays games on a tablet in the evening",
+    "goes to the park on weekends",
+    "is already paying for two other kids' apps"
+  ]
+}

@@ -1,0 +1,5 @@
+# Your own launch workspace. The product repo keeps its launch/ folder; never commit it here.
+launch/
+.DS_Store
+__pycache__/
+*.pyc

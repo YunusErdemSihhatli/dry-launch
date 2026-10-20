@@ -1,0 +1,25 @@
+{
+  "features": [
+    {
+      "id": "F1",
+      "name": "Block coding",
+      "what": "Build a simple program by snapping coloured blocks together.",
+      "steps": [
+        "Open the coding board",
+        "Drag a 'move forward' block onto the board",
+        "Add a 'wait' block and a 'light up' block",
+        "Press the play button and watch the robot follow the program"
+      ]
+    },
+    {
+      "id": "F2",
+      "name": "Parent progress view",
+      "what": "A parent sees what the child built and how long they spent on it.",
+      "steps": [
+        "Open the companion app and sign in",
+        "Choose the child's profile",
+        "Read this week's summary of programs built"
+      ]
+    }
+  ]
+}
