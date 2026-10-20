@@ -100,4 +100,4 @@ tests/            unit tests (unittest)
 
 ## License
 
-MIT. See [LICENSE](LICENSE). The price logic is adapted from founder-skill by Jake Schincariol (MIT).
+MIT. See [LICENSE](LICENSE). The price logic is adapted from founder-skill by Jake Schincariol (MIT); see [NOTICE](NOTICE).
