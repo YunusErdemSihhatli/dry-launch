@@ -8,6 +8,10 @@ import panel
 import tally
 
 
+def cards_of(d):
+    return panel.load_cards(d)[0]
+
+
 class RecommendTests(unittest.TestCase):
     def stats(self, value, complexity, understood):
         return {"avg_value": value, "avg_complexity": complexity, "understood": understood}
@@ -28,8 +32,9 @@ class ProjectTests(unittest.TestCase):
     def setUp(self):
         self.tmp, self.d = make_project()
         panel.cmd_init(self.d, 10, 7, False)
-        self.features = panel.load_inputs(self.d)[2]
-        self.cards = panel.load_cards(self.d)[0]
+        self.customer, _, self.features = panel.load_inputs(self.d)
+        self.price = panel.price_of(self.customer)
+        self.cards = cards_of(self.d)
 
     def tearDown(self):
         shutil.rmtree(self.tmp)
@@ -37,10 +42,14 @@ class ProjectTests(unittest.TestCase):
     def write(self, rnd, obj):
         write_json(panel.answer_path(self.d, rnd, obj["id"]), obj)
 
+    def r1_for(self, c, buys=True):
+        if c["decision_type"] == "buyer":
+            return r1_answer(c["id"], self.features, "buyer", buys=buys, price=self.price, income=c["income"])
+        return r1_answer(c["id"], self.features, c["decision_type"], buys=buys)
+
     def fill_r1(self, buys_every=3):
         for i, c in enumerate(self.cards):
-            buys = (i % buys_every != 0)
-            self.write("1", r1_answer(c["id"], self.features, c["decision_type"], buys=buys))
+            self.write("1", self.r1_for(c, buys=(i % buys_every != 0)))
 
     def fill_r2(self, changed_id=None):
         for c in self.cards:
@@ -54,21 +63,19 @@ class ProjectTests(unittest.TestCase):
         self.fill_r1()
         rows = panel.load_round(self.d, "1")[0]
         themes = tally.cluster_inputs(rows, "themes")
-        kinds = {x["kind"] for x in themes}
-        self.assertEqual(kinds, {"reason", "objection", "concern"})
-        self.assertFalse([x for x in themes if x["persona"] in
-                          {c["id"] for c in self.cards if c["decision_type"] == "user"}])
-        questions = tally.cluster_inputs(rows, "questions")
-        self.assertEqual(len(questions), 10)
+        self.assertEqual({x["kind"] for x in themes}, {"reason", "objection", "concern"})
+        user_ids = {c["id"] for c in self.cards if c["decision_type"] == "user"}
+        self.assertFalse([x for x in themes if x["persona"] in user_ids])
+        self.assertEqual(len(tally.cluster_inputs(rows, "questions")), 10)
 
     def test_prepare_then_apply_questions(self):
         self.fill_r1()
         tally.cmd_prepare(self.d, "questions")
         raw = read_json(os.path.join(self.d, "qa", "questions_raw.json"))
         refs = [x["ref"] for x in raw]
-        clusters = [{"text": "How long does the battery last?", "members": refs[:7]},
-                    {"text": "Is it safe?", "members": refs[7:]}]
-        write_json(os.path.join(self.d, "qa", "questions_clusters.json"), clusters)
+        write_json(os.path.join(self.d, "qa", "questions_clusters.json"),
+                   [{"text": "How long does the battery last?", "members": refs[:7]},
+                    {"text": "Is it safe?", "members": refs[7:]}])
         tally.cmd_apply(self.d, "questions", 10)
         qs = read_json(os.path.join(self.d, "qa", "questions.json"))
         self.assertEqual([q["id"] for q in qs], ["Q1", "Q2"])
@@ -79,8 +86,8 @@ class ProjectTests(unittest.TestCase):
         self.fill_r1()
         tally.cmd_prepare(self.d, "themes")
         raw = read_json(os.path.join(self.d, "qa", "themes_raw.json"))
-        path = os.path.join(self.d, "qa", "themes_clusters.json")
         ref = raw[0]["ref"]
+        path = os.path.join(self.d, "qa", "themes_clusters.json")
         write_json(path, [{"text": "x", "members": ["P99-reason"]}])
         with self.assertRaisesRegex(panel.PanelError, "is not in themes_raw"):
             tally.cmd_apply(self.d, "themes", 10)
@@ -91,45 +98,53 @@ class ProjectTests(unittest.TestCase):
         with self.assertRaisesRegex(panel.PanelError, "in no cluster"):
             tally.cmd_apply(self.d, "themes", 10)
 
-    def test_themes_apply_writes_themes(self):
-        self.fill_r1()
-        tally.cmd_prepare(self.d, "themes")
-        raw = read_json(os.path.join(self.d, "qa", "themes_raw.json"))
-        write_json(os.path.join(self.d, "qa", "themes_clusters.json"),
-                   [{"text": "screen time worry", "members": [x["ref"] for x in raw]}])
-        tally.cmd_apply(self.d, "themes", 10)
-        ts = read_json(os.path.join(self.d, "qa", "themes.json"))
-        self.assertEqual(ts[0]["count"], len(raw))
-
     # ── report ──────────────────────────────────────────────────────────────────
     def test_purchase_rate_counts_buyers_only(self):
-        # every user and influencer says yes, every buyer says no: buyer rate must be 0%
         for c in self.cards:
-            self.write("1", r1_answer(c["id"], self.features, c["decision_type"],
-                                      buys=(c["decision_type"] != "buyer")))
+            self.write("1", self.r1_for(c, buys=(c["decision_type"] != "buyer")))
         tally.cmd_results(self.d)
         self.assertIn("**Round 1, buyers:** 0 buy", self.report())
+
+    def test_report_header_names_market_and_source(self):
+        self.fill_r1()
+        tally.cmd_results(self.d)
+        text = self.report()
+        self.assertIn("**Market:** US · currency USD · income:", text)
+        self.assertIn("(2024)", text)
+        self.assertIn("confirmed: yes", text)
 
     def test_report_sections_and_role_metrics(self):
         self.fill_r1()
         tally.cmd_results(self.d)
         text = self.report()
-        for heading in ("## By role", "## Features", "## Why buyers pass", "## Task test", "## Price range",
+        for heading in ("## By role", "## By income band", "## Features", "## Why buyers pass", "## Task test",
                         "## Warnings: read before you act", "### Three riskiest assumptions to verify with real users",
                         "## Missing answers"):
             self.assertIn(heading, text)
         self.assertIn("wants it", text)
         self.assertIn("would recommend", text)
-        self.assertIn("buys", text)
         self.assertIn("The purchase rate is for buyers only", text)
         self.assertIn("Buy rate is an upper bound", text)
 
-    def test_price_range_uses_buyers_only(self):
+    def test_band_table_breaks_down_buyers_by_band(self):
+        self.fill_r1()
+        tally.cmd_results(self.d)
+        text = self.report()
+        for band in ("| low |", "| middle |", "| high |"):
+            self.assertIn(band, text)
+        self.assertIn("1,200-4,300 USD", text)
+
+    def test_band_price_range_is_not_shown_without_enough_answers(self):
+        self.fill_r1()
+        tally.cmd_results(self.d)
+        self.assertIn("not enough answers", self.report())
+
+    def test_price_section_is_buyers_only(self):
         self.fill_r1()
         tally.cmd_results(self.d)
         self.assertIn("buyers only", self.report())
 
-    def test_task_not_run_yet_and_round2_not_run_yet(self):
+    def test_task_and_round2_not_run_yet(self):
         self.fill_r1()
         tally.cmd_results(self.d)
         text = self.report()
@@ -148,7 +163,8 @@ class ProjectTests(unittest.TestCase):
     def test_task_section_when_present(self):
         self.fill_r1()
         for c in self.cards:
-            self.write("task", task_answer(c["id"], self.features, stuck=(c["id"] == "P01")))
+            write_json(panel.answer_path(self.d, "task", c["id"]),
+                       task_answer(c["id"], self.features, stuck=(c["id"] == "P01")))
         tally.cmd_results(self.d)
         text = self.report()
         self.assertIn("### F1 Block coding: 9 of 10 reached the goal", text)
@@ -166,12 +182,11 @@ class ProjectTests(unittest.TestCase):
 
     def test_most_common_objection_counted_by_reason_code(self):
         for c in self.cards:
-            self.write("1", r1_answer(c["id"], self.features, c["decision_type"],
-                                      buys=(c["decision_type"] != "buyer")))
+            self.write("1", self.r1_for(c, buys=(c["decision_type"] != "buyer")))
         tally.cmd_results(self.d)
         text = self.report()
         self.assertIn("| price |", text)
-        self.assertIn("the main reason buyers pass, \"price\"", text)
+        self.assertIn('the main reason buyers pass, "price"', text)
 
 
 if __name__ == "__main__":

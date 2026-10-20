@@ -9,11 +9,14 @@ It is for finding objections and weak spots early. It does not predict real sale
 
 ## How it works
 
-1. **init**: deal persona cards from your target audience. Default 100 personas; `--quick` gives 20, `--n` any number. Each role has a `decision_type`: `buyer`, `user`,
-   or `influencer`. The same seed always gives the same cards.
+1. **affordability and init**: the market is chosen for any country. Its household income bands (monthly net, in the
+   local currency) come from official statistics, and you approve the table before anything is dealt. Then
+   `init` deals persona cards: default 100 personas, `--quick` 20, `--n` any number. Each role has a
+   `decision_type` (`buyer`, `user`, `influencer`). The same seed always gives the same cards.
 2. **keynote (round 1)**: each persona reads the keynote and rates every feature (understood, value,
    complexity, comment, what is missing). Then it answers its role's questions and asks up to three questions.
-   Buyers also give four price answers if the product states a price.
+   Buyers with a price also state, in their own words, what they would pay and their monthly income. The script
+   checks those statements against the card, and the brief gives the price as a share of their income.
 3. **pressroom**: a Sonnet subagent clusters the questions and the free-text themes by meaning. You get the top
    10 questions and answer them.
 4. **round 2**: each persona re-decides with your answers in hand.
@@ -61,8 +64,9 @@ Then edit `launch/customer.json`, `launch/product.md`, and `launch/features.json
 into `launch/screens/`. Ask Claude Code to "run dry-launch". The skill walks through the steps and dispatches the
 subagents. Keep `launch/` out of your product's commits, for example by adding it to that repo's `.gitignore`.
 
-`launch.example/` is a small working example: a coding toy with a stated price, three roles (buyer, user,
-influencer), two features, and four mockup screens.
+`launch.example/` is a small working example: a coding toy at a one-time price, three roles (buyer, user,
+influencer), two features, and four mockup screens. Its market, income bands and price are **placeholders**:
+verify the bands against the census table, then set `market.confirmed` to true before you run init.
 
 ## Tests
 

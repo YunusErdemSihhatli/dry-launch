@@ -2,6 +2,7 @@
 """dry-launch panel: deals persona cards and runs the bookkeeping for every round.
 Standard library only, no network.
 
+    python3 panel.py affordability [--dir launch]     # income bands, and the price as a share of each
     python3 panel.py init   [--dir launch] [--n 100 | --quick] [--seed 7] [--force]
     python3 panel.py briefs [--dir launch] --round 1|2|task [--wave 10]
     python3 panel.py check  [--dir launch] --round 1|2|task
@@ -9,18 +10,20 @@ Standard library only, no network.
     python3 panel.py status [--dir launch]
 
 Each role in customer.json has a decision_type:
-    buyer       pays for it: buys, reason_code, reason, and the four price answers if the product states a price
+    buyer       pays for it: buys, reason_code, reason, and (if the product has a price) the price questions,
+                plus i_pay and my_income, which are checked against the card
     user        uses it, does not pay: wants_it, would_ask_parent, would_keep_using_after_week
     influencer  is asked by buyers: would_recommend, concerns
-Every role rates every feature. Purchase rate and price range come from buyers only.
+Every persona has a household income drawn from a market income band. Every role rates every feature.
+The purchase rate and the price range come from buyers only.
 
 Rounds:
     1     keynote: each persona hears the pitch, rates features, answers its role's questions, asks questions
     2     after the team answers the questions: each persona re-decides
     task  task test: each persona walks the features' checkpoints on the screens and records where it gets stuck
 
-Personas answer through subagents that write their own files. This script never writes an
-answer for a persona: `save` only files a reply the persona printed.
+Personas answer through subagents that write their own files. This script never writes an answer for a
+persona: `save` only files a reply the persona printed.
 """
 
 import argparse
@@ -33,10 +36,15 @@ import shutil
 import sys
 
 ROUNDS = ("1", "2", "task")
+DECISION_TYPES = ("buyer", "user", "influencer")
+PRICE_PERIODS = ("month", "year", "once")
 DEFAULT_N = 100
 QUICK_N = 20
-DECISION_TYPES = ("buyer", "user", "influencer")
+MONEY_TOLERANCE = 0.10          # the persona's stated amounts must be within 10% of the card
+AFFORDABILITY_WARN_SHARE = 0.15  # price above this share of monthly income ...
+AFFORDABILITY_WARN_PANEL = 0.50  # ... for more than this share of the buyers: warn at init
 REASONS = ["price", "need", "habit", "trust", "quality", "convenience", "timing", "values", "other"]
+VERDICTS = ["keep", "improve", "drop", "missing"]
 TEMPERS = [
     "skeptical, questions everything",
     "curious, likes trying new things",
@@ -54,8 +62,6 @@ NAMES = [
     "Ivy", "Tomas", "Lucia", "Ezra", "Sienna", "Quinn", "Yara", "Hugo", "Nia", "Oscar", "Tess", "Emil",
 ]
 PRICE_KEYS = ("price_too_cheap", "price_bargain", "price_expensive", "price_too_expensive")
-# A price counts as stated when product.md has a number next to a currency sign or code.
-PRICE_RE = re.compile(r"\d[\d.,]*\s*(?:TL|₺|USD|EUR|GBP|\$|€|£)|[$€£₺]\s*\d[\d.,]*")
 
 # Role-specific answer fields per round: (key, kind). Kinds: bool, scale (1-5), reason, text.
 FIELDS = {
@@ -72,21 +78,20 @@ FIELDS = {
         "2": [("would_recommend", "scale"), ("concerns", "text")],
     },
 }
+# Buyers who see a price state it back in round 1, so the script can check they understood it.
+COMPREHENSION_FIELDS = [("i_pay", "text"), ("my_income", "text")]
 DESCRIPTIONS = {
     "buys": "true or false: would you buy it",
     "reason_code": "one of price / need / habit / trust / quality / convenience / timing / values / other",
     "reason": "why, one or two sentences, in your own voice",
     "top_objection": "what holds you back most right now",
+    "i_pay": "what you would pay for it, in your own words, with the amount, the currency and the period",
+    "my_income": "your household's monthly net income, in your own words, with the amount and the currency",
     "wants_it": "a number 1 to 5: how much you want it",
     "would_ask_parent": "true or false: would you ask someone else to buy it for you",
     "would_keep_using_after_week": "true or false: would you still use it after a week",
     "would_recommend": "a number 1 to 5: how likely you are to recommend it to someone who might buy it",
     "concerns": "what you would warn someone about, in your own voice",
-}
-THINKING_LINE = {
-    "buyer": "Think about your own life and your own money, not the product in the abstract.",
-    "user": "Think about your own life and whether you would actually play with it, not the product in the abstract.",
-    "influencer": "Think about your own life and the people you talk to, not the product in the abstract.",
 }
 ROLE_HELP = {
     "buyer": "You are the one who pays. Your answers are about buying it.",
@@ -94,6 +99,11 @@ ROLE_HELP = {
             "would ask someone to buy it.",
     "influencer": "You do not buy it yourself, but people ask you about things like this. Your answers are "
                   "about whether you would recommend it.",
+}
+THINKING_LINE = {
+    "buyer": "Think about your own life and your own money, not the product in the abstract.",
+    "user": "Think about your own life and whether you would actually play with it, not the product in the abstract.",
+    "influencer": "Think about your own life and the people you talk to, not the product in the abstract.",
 }
 REACTION_SCHEMA = """    {"feature": "__FID__", "understood": true or false,
      "value": 1 to 5, "complexity": 1 to 5,
@@ -118,7 +128,7 @@ Both yes and no are useful answers. Say what you would really do in your situati
 BRIEF_R1 = PERSONA_HEAD + """
 === WHO YOU ARE ===
 {name}, {age} years old. Your role: {role}. {role_help}
-{income_line}How you decide: {how}
+{income_line}{affordability_line}How you decide: {how}
 Who decides: {decision}
 Personality: {temper}.
 {habit_line}The first thing that comes to mind when you hear about a product like this: "{objection}"
@@ -146,7 +156,7 @@ JSON, no markdown fence, no other text:
 
 BRIEF_R2 = PERSONA_HEAD + """
 This is round 2. The product is the same and so are you: {name}, {age} years old, {role}. {role_help}
-Who decides: {decision}
+{income_line}{affordability_line}Who decides: {decision}
 How you decide: {how}
 
 In round 1 your own answer was:
@@ -200,7 +210,8 @@ JSON, no markdown fence, no other text:
 
 PRICE_BLOCK = """
 === PRICE ===
-The price is stated in the keynote. Answer four questions with a number in the same currency ({currency}):
+The price is stated in the keynote. Answer four questions with a number, in the same currency ({currency})
+and for the same period ({period_name}) as the price:
 - price_too_cheap: the price at which it seems too cheap to be any good
 - price_bargain: the price at which it feels like a bargain
 - price_expensive: the price at which it starts to feel expensive, but you might still buy
@@ -235,7 +246,107 @@ def read_text(path):
         return fh.read().strip()
 
 
+def _is_int(v):
+    return isinstance(v, int) and not isinstance(v, bool)
+
+
+def _is_num(v):
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+# ── money ───────────────────────────────────────────────────────────────────────
+def fmt_money(x):
+    x = float(x)
+    return "{:,}".format(int(x)) if x.is_integer() else "{:,.2f}".format(x)
+
+
+def monthly_price(price):
+    """The price per month: a yearly price is spread over 12 months; a one-time price is compared as is."""
+    amount = float(price["amount"])
+    return amount / 12.0 if price["period"] == "year" else amount
+
+
+def price_share(price, income):
+    return 100.0 * monthly_price(price) / income
+
+
+def period_phrase(price):
+    cur = price.get("_currency", "")
+    amt = fmt_money(price["amount"])
+    if price["period"] == "month":
+        return "%s %s per month" % (amt, cur)
+    if price["period"] == "year":
+        return "%s %s per year (about %s %s per month)" % (amt, cur, fmt_money(monthly_price(price)), cur)
+    return "%s %s as a one-time payment" % (amt, cur)
+
+
+def parse_money(text):
+    """(amount, period) from a persona's free text. Period is 'month', 'year', 'once' or None."""
+    t = (text or "").lower()
+    amount = None
+    m = re.search(r"\d+(?:[.,]\d+)*", t)
+    if m:
+        tok = m.group(0)
+        if re.fullmatch(r"\d{1,3}(?:,\d{3})+(?:\.\d+)?", tok):          # 1,200 or 1,200.50 (US style)
+            amount = float(tok.replace(",", ""))
+        elif re.fullmatch(r"\d{1,3}(?:\.\d{3})+(?:,\d+)?", tok):         # 1.200 or 1.200,50 (TR style)
+            amount = float(tok.replace(".", "").replace(",", "."))
+        elif re.fullmatch(r"\d{1,3}(?:[.,]\d{3})+", tok):                  # ambiguous group: thousands
+            amount = float(re.sub(r"[.,]", "", tok))
+        else:                                                              # 1.5 or 1,5
+            amount = float(tok.replace(",", "."))
+    period = None
+    if re.search(r"per year|yearly|a year|annual|/\s*year|\byear\b|\byıl|yılda|yıllık", t):
+        period = "year"
+    elif re.search(r"one[- ]?time|one[- ]off|\bonce\b|single|tek seferlik|bir kerelik", t):
+        period = "once"
+    elif re.search(r"per month|monthly|a month|/\s*month|\bmonth\b|\bayda\b|aylık|\bay\b", t):
+        period = "month"
+    return amount, period
+
+
 # ── inputs ──────────────────────────────────────────────────────────────────────
+def validate_market(m):
+    if not isinstance(m, dict):
+        raise PanelError("customer.json needs a 'market' object (country, currency, income_source, income_year, "
+                         "income_bands, confirmed)")
+    for k in ("country", "currency", "income_source"):
+        if not str(m.get(k, "")).strip():
+            raise PanelError("market needs '%s'" % k)
+    if not _is_int(m.get("income_year")):
+        raise PanelError("market 'income_year' must be a year, for example 2024")
+    if not isinstance(m.get("confirmed"), bool):
+        raise PanelError("market 'confirmed' must be true or false: true only after the user approved the "
+                         "affordability table")
+    bands = m.get("income_bands") or []
+    if not bands:
+        raise PanelError("market needs at least one income band")
+    names = set()
+    for b in bands:
+        if not b.get("name") or b["name"] in names:
+            raise PanelError("every income band needs a unique 'name'")
+        names.add(b["name"])
+        pc = b.get("percentile")
+        if not (isinstance(pc, list) and len(pc) == 2 and all(_is_num(v) for v in pc) and 0 <= pc[0] < pc[1] <= 100):
+            raise PanelError("band %s: 'percentile' must be [low, high] within 0-100" % b["name"])
+        if not (_is_num(b.get("share")) and b["share"] > 0):
+            raise PanelError("band %s: 'share' must be a positive number" % b["name"])
+        mo = b.get("monthly")
+        if not (isinstance(mo, list) and len(mo) == 2 and all(_is_num(v) for v in mo) and 0 <= mo[0] <= mo[1]):
+            raise PanelError("band %s: 'monthly' must be [min, max] in monthly net household income" % b["name"])
+    return bands
+
+
+def validate_price(p):
+    if p is None:
+        return None
+    if not isinstance(p, dict) or not _is_num(p.get("amount")) or p["amount"] <= 0:
+        raise PanelError("customer.json 'price' must be an object like {\"amount\": 39, \"period\": \"once\"}")
+    if p.get("period") not in PRICE_PERIODS:
+        raise PanelError("customer.json 'price.period' is required: month, year or once")
+    return p
+
+
 def load_inputs(d):
     """customer.json, product.md, features.json must be filled in (no TODO left)."""
     customer = load_json(os.path.join(d, "customer.json"))
@@ -243,19 +354,24 @@ def load_inputs(d):
         raise PanelError("customer.json needs a 'roles' list (at least one role)")
     if len(customer.get("objections", [])) < 3:
         raise PanelError("customer.json needs at least 3 'objections'")
+    bands = validate_market(customer.get("market"))
+    band_names = {b["name"] for b in bands}
     for r in customer["roles"]:
         if not r.get("name") or len(r.get("age", [])) != 2:
             raise PanelError("every role needs a 'name' and an 'age' [low, high]")
         if r.get("decision_type") not in DECISION_TYPES:
             raise PanelError("role %r needs decision_type: buyer, user or influencer" % r.get("name"))
-        for t in r.get("income_tiers", []) or []:
-            if not t.get("name") or not _is_num(t.get("share")) or t["share"] <= 0:
-                raise PanelError("role %r: every income tier needs a 'name' and a positive 'share'" % r["name"])
-            inc = t.get("income", [])
-            if len(inc) != 2 or not all(_is_num(v) for v in inc) or inc[0] > inc[1]:
-                raise PanelError("role %r tier %r: 'income' must be [low, high] monthly net" % (r["name"], t["name"]))
-    if "price" in customer and not (_is_num(customer["price"]) and customer["price"] > 0):
-        raise PanelError("customer.json 'price' must be a positive number (the product price, for the affordability line)")
+        for key in ("habits", "objections", "tempers"):
+            if key in r and (not isinstance(r[key], list) or not r[key]
+                             or not all(isinstance(x, str) and x.strip() for x in r[key])):
+                raise PanelError("role %r: '%s' must be a non-empty list of strings" % (r["name"], key))
+        override = r.get("band_shares")
+        if override is not None:
+            if set(override) != band_names or any(not _is_num(v) or v < 0 for v in override.values()) \
+                    or sum(override.values()) <= 0:
+                raise PanelError("role %r: 'band_shares' must give a non-negative share for every income band"
+                                 % r["name"])
+    validate_price(customer.get("price"))
     product = read_text(os.path.join(d, "product.md"))
     features = load_json(os.path.join(d, "features.json")).get("features", [])
     if not features:
@@ -265,14 +381,21 @@ def load_inputs(d):
             raise PanelError("every feature needs 'id', 'name' and 'what'")
         if not f.get("steps"):
             raise PanelError("feature %s needs 'steps' (the checkpoints for the task test)" % f["id"])
+        if "for" in f and (not isinstance(f["for"], list) or not f["for"]
+                           or not all(x in DECISION_TYPES for x in f["for"])):
+            raise PanelError("feature %s: 'for' must be a non-empty list of buyer, user, influencer" % f["id"])
     blob = json.dumps(customer, ensure_ascii=False) + product + json.dumps(features, ensure_ascii=False)
     if "TODO" in blob:
         raise PanelError("launch/ still has template text (TODO): fill in customer.json, product.md, features.json")
     return customer, product, features
 
 
-def price_enabled(product):
-    return bool(PRICE_RE.search(product))
+def price_of(customer):
+    """The price object with its currency attached, or None when the product has no price."""
+    p = customer.get("price")
+    if p is None:
+        return None
+    return dict(p, _currency=customer["market"]["currency"])
 
 
 def feature_text(features):
@@ -311,6 +434,8 @@ def schema_text(pid, dtype, rnd, features, price):
     if rnd == "2":
         lines += ['"changed_mind": true or false',
                   '"why_changed": "what changed and why; leave empty if nothing changed"']
+    if rnd == "1" and dtype == "buyer" and price:
+        lines += ['"%s": %s' % (k, DESCRIPTIONS[k]) for k, _ in COMPREHENSION_FIELDS]
     for key, _ in FIELDS[dtype][rnd]:
         lines.append('"%s": %s' % (key, DESCRIPTIONS[key]))
     if rnd == "1" and dtype == "buyer" and price:
@@ -340,63 +465,69 @@ def round_income(x):
     return int(round(x, -2)) if x < 10000 else int(round(x, -3))
 
 
-def expand_roles(customer):
-    """A role with income_tiers becomes one sub-role per tier, sharing the role's share."""
-    out = []
-    for r in customer["roles"]:
-        tiers = r.get("income_tiers") or []
-        if tiers:
-            for t in tiers:
-                out.append(dict(r, share=float(r.get("share", 1)) * float(t["share"]),
-                                income=t["income"], income_tier=t["name"]))
-        else:
-            out.append(dict(r, income_tier=None))
-    return out
+def band_items(customer, role):
+    """The income bands for one role, with each band's share within the role (relative, normalized)."""
+    bands = customer["market"]["income_bands"]
+    override = role.get("band_shares")
+    weights = {b["name"]: float(override[b["name"]]) if override else float(b["share"]) for b in bands}
+    total = sum(weights.values())
+    return [{"share": weights[b["name"]] / total, "band": b["name"], "monthly": b["monthly"]}
+            for b in bands if weights[b["name"]] > 0]
+
+
+def _pick(rng, items):
+    return items[rng.randrange(len(items))]
 
 
 def deal(customer, n, seed):
-    """Same customer + n + seed gives the same cards, every time."""
+    """Same customer + n + seed gives the same cards, every time.
+    Roles are split first, exactly, so each role keeps its share even at small n. Each role's personas are
+    then split across its income bands the same way."""
     rng = random.Random(seed)
-    expanded = expand_roles(customer)
     roles = []
-    for r, k in zip(expanded, quota(expanded, n)):
-        roles += [r] * k
+    for r, k in zip(customer["roles"], quota(customer["roles"], n)):
+        items = band_items(customer, r)
+        for item, bk in zip(items, quota(items, k)):
+            roles += [dict(r, band=item["band"], monthly=item["monthly"])] * bk
     rng.shuffle(roles)
     names = (customer.get("names") or NAMES)[:]
     rng.shuffle(names)
-    habits = customer.get("habits") or []
+    global_habits = customer.get("habits") or []
     cards = []
     for i, role in enumerate(roles):
         lo, hi = role["age"]
-        inc = role.get("income")
+        mlo, mhi = role["monthly"]
         name = names[i % len(names)]
         if i >= len(names):
             name = "%s %d" % (name, i // len(names) + 1)
+        income = min(max(round_income(rng.uniform(float(mlo), float(mhi))), int(mlo)), int(mhi))
         cards.append({
             "id": "P%02d" % (i + 1),
             "name": name,
             "role": role["name"],
             "decision_type": role["decision_type"],
             "age": rng.randint(int(lo), int(hi)),
-            "income": round_income(rng.uniform(float(inc[0]), float(inc[1]))) if inc else None,
-            "income_tier": role.get("income_tier"),
+            "income": income,
+            "income_band": role["band"],
+            "current_spend": role.get("current_spend", ""),
             "how": role.get("how", ""),
             "decision": role.get("decision", ""),
-            "temper": TEMPERS[rng.randrange(len(TEMPERS))],
-            "objection": customer["objections"][rng.randrange(len(customer["objections"]))],
-            "habit": habits[rng.randrange(len(habits))] if habits else "",
+            "temper": _pick(rng, role.get("tempers") or TEMPERS),
+            "objection": _pick(rng, role.get("objections") or customer["objections"]),
+            "habit": _pick(rng, role.get("habits") or global_habits) if (role.get("habits") or global_habits) else "",
         })
     return cards
 
 
 def card_md(c, currency):
-    inc = ("Income: about %s %s per month, net" % ("{:,}".format(c["income"]), currency)) if c["income"] else "Income: none (household budget)"
+    spend = c["current_spend"] or "-"
     return "\n".join([
         "# %s · %s (%d)" % (c["id"], c["name"], c["age"]),
         "",
         "- Role: %s (%s)" % (c["role"], c["decision_type"]),
-        "- Income tier: %s" % (c.get("income_tier") or "-"),
-        "- %s" % inc,
+        "- Household income: about %s %s per month, net (band: %s)" % (
+            "{:,}".format(c["income"]), currency, c["income_band"]),
+        "- Current spend on this kind of thing: %s" % spend,
         "- How they decide: %s" % c["how"],
         "- Who decides: %s" % c["decision"],
         "- Personality: %s" % c["temper"],
@@ -406,8 +537,24 @@ def card_md(c, currency):
     ])
 
 
+def panel_affordability_warning(cards, price):
+    """Buyers for whom the price is above the warning share of their monthly income."""
+    buyers = [c for c in cards if c["decision_type"] == "buyer"]
+    if not buyers or not price:
+        return None
+    over = [c for c in buyers if price_share(price, c["income"]) > 100 * AFFORDABILITY_WARN_SHARE]
+    if len(over) > AFFORDABILITY_WARN_PANEL * len(buyers):
+        return ("Warning: the price is more than %d%% of the monthly income for %d of %d buyers (%d%%). "
+                "Check the income bands and the price before you spend the panel's calls." % (
+                    100 * AFFORDABILITY_WARN_SHARE, len(over), len(buyers), 100 * len(over) // len(buyers)))
+    return None
+
+
 def cmd_init(d, n, seed, force):
     customer, _, _ = load_inputs(d)
+    if not customer["market"]["confirmed"]:
+        raise PanelError("the market is not confirmed. Run `panel.py affordability`, show the table to the user, "
+                         "and set market.confirmed to true once they approve it")
     if n < len(customer["roles"]):
         raise PanelError("n=%d is less than the %d roles: each role needs at least one persona" % (n, len(customer["roles"])))
     ans = os.path.join(d, "answers")
@@ -422,10 +569,39 @@ def cmd_init(d, n, seed, force):
     write_json(os.path.join(d, "personas", "cards.json"), {"n": n, "seed": seed, "cards": cards})
     for c in cards:
         with open(os.path.join(d, "personas", c["id"] + ".md"), "w", encoding="utf-8") as fh:
-            fh.write(card_md(c, customer.get("currency", "")))
+            fh.write(card_md(c, customer["market"]["currency"]))
     for sub in ("answers/r1", "answers/r2", "answers/task", "briefs"):
         os.makedirs(os.path.join(d, sub), exist_ok=True)
     print("dealt %d personas (seed %s) into %s/personas/. Next: briefs --round 1" % (len(cards), seed, d))
+    warn = panel_affordability_warning(cards, price_of(customer))
+    if warn:
+        print(warn)
+
+
+def cmd_affordability(d):
+    customer, _, _ = load_inputs(d)
+    price = price_of(customer)
+    if not price:
+        raise PanelError("affordability needs a 'price' in customer.json")
+    m = customer["market"]
+    L = ["Market: %s · currency %s · income year %d · source: %s · confirmed: %s" % (
+        m["country"], m["currency"], m["income_year"], m["income_source"], "yes" if m["confirmed"] else "no"),
+        "",
+        "Price: %s. The percentages below compare this amount with each monthly income%s" % (
+            period_phrase(price), " (a one-time price is compared as is)" if price["period"] == "once" else ""),
+        "",
+        "| band | percentile | monthly net household income | share of personas | price as % of income, at low end | at high end |",
+        "| --- | --- | --- | ---: | ---: | ---: |"]
+    total = sum(b["share"] for b in m["income_bands"])
+    for b in m["income_bands"]:
+        lo, hi = b["monthly"]
+        at_lo = "%.1f%%" % price_share(price, lo) if lo > 0 else "n/a"
+        at_hi = "%.1f%%" % price_share(price, hi) if hi > 0 else "n/a"
+        L.append("| %s | %d-%d | %s-%s %s | %.0f%% | %s | %s |" % (
+            b["name"], b["percentile"][0], b["percentile"][1], fmt_money(lo), fmt_money(hi), m["currency"],
+            100 * b["share"] / total, at_lo, at_hi))
+    print("\n".join(L))
+    print("\nShow this table to the user. Once they approve it, set market.confirmed to true, then run init.")
 
 
 def load_cards(d):
@@ -442,15 +618,15 @@ def brief_path(d, rnd, pid):
 
 
 def project_state(d):
-    """(customer, product, features, cards, price) after validating the inputs."""
+    """(customer, product, features, cards, price) after validating the inputs. price is None without a price."""
     customer, product, features = load_inputs(d)
     cards, _ = load_cards(d)
-    return customer, product, features, cards, price_enabled(product)
+    return customer, product, features, cards, price_of(customer)
 
 
 def persona_price(card, price):
-    """Price questions go to buyers only, and only when the product states a price."""
-    return price and card["decision_type"] == "buyer"
+    """Price questions and the affordability check go to buyers only, and only when the product has a price."""
+    return price if (price and card["decision_type"] == "buyer") else None
 
 
 # ── briefs ──────────────────────────────────────────────────────────────────────
@@ -473,38 +649,41 @@ def parse_answers_md(d):
     return {k: "\n".join(v).strip() for k, v in out.items() if "\n".join(v).strip()}
 
 
-def income_lines(c, customer):
-    """Monthly income line, plus the price as a share of it for buyers. Computed here, not guessed by the model."""
-    currency = customer.get("currency", "")
-    if not c["income"]:
-        return ""
-    lines = "Your monthly net income is about %s %s.\n" % ("{:,}".format(c["income"]), currency)
-    price = customer.get("price")
-    if c["decision_type"] == "buyer" and price:
-        share = 100.0 * float(price) / c["income"]
-        lines += "The price is %s %s, about %.0f%% of your monthly income.\n" % (
-            "{:,}".format(int(price)), currency, share)
-    return lines
+def affordability_line(c, price):
+    """What a persona knows about money: its spend, and for buyers the price as a share of its income."""
+    parts = []
+    if c["current_spend"]:
+        parts.append("Right now you already spend on this kind of thing: %s.\n" % c["current_spend"])
+    if price and c["decision_type"] == "buyer":
+        parts.append("The price is %s. This is %.1f%% of your household's monthly income.\n" % (
+            period_phrase(price), price_share(price, c["income"])))
+    return "".join(parts)
 
 
 def build_brief(d, rnd, c, features, product, customer, qa_text="", prev_text=""):
-    currency = customer.get("currency", "")
+    market = customer["market"]
+    price = persona_price(c, price_of(customer))
     pid = c["id"]
     out = os.path.abspath(answer_path(d, rnd, pid))
-    price = persona_price(c, price_enabled(product))
+    income_line = "Your household's monthly net income is about %s %s.\n" % (
+        "{:,}".format(c["income"]), market["currency"])
     common = dict(name=c["name"], age=c["age"], role=c["role"], how=c["how"], decision=c["decision"],
                   temper=c["temper"], objection=c["objection"], out=out, screens_line=screens_line(d),
-                  role_help=ROLE_HELP[c["decision_type"]], product=product, features=feature_text(features))
+                  role_help=ROLE_HELP[c["decision_type"]], product=product, features=feature_text(features),
+                  income_line=income_line, affordability_line=affordability_line(c, price_of(customer)))
     if rnd == "1":
+        price_block = ""
+        if price:
+            price_block = PRICE_BLOCK.format(currency=market["currency"],
+                                             period_name={"month": "per month", "year": "per year",
+                                                          "once": "one-time"}[price["period"]])
         return BRIEF_R1.format(
-            income_line=income_lines(c, customer),
             habit_line=("Your day: %s.\n" % c["habit"]) if c["habit"] else "",
-            price_block=PRICE_BLOCK.format(currency=currency) if price else "",
-            thinking_line=THINKING_LINE[c["decision_type"]],
+            price_block=price_block, thinking_line=THINKING_LINE[c["decision_type"]],
             schema=schema_text(pid, c["decision_type"], "1", features, price), **common)
     if rnd == "2":
         return BRIEF_R2.format(
-            prev=prev_text, qa=qa_text, schema=schema_text(pid, c["decision_type"], "2", features, False), **common)
+            prev=prev_text, qa=qa_text, schema=schema_text(pid, c["decision_type"], "2", features, None), **common)
     return BRIEF_TASK.format(
         tasks=task_text(features), schema=TASK_SCHEMA.replace("__ID__", pid), name=c["name"], age=c["age"],
         role=c["role"], how=c["how"], temper=c["temper"], out=out, screens_line=screens_line(d))
@@ -512,12 +691,11 @@ def build_brief(d, rnd, c, features, product, customer, qa_text="", prev_text=""
 
 def cmd_briefs(d, rnd, wave):
     customer, product, features, cards, price = project_state(d)
-    currency = customer.get("currency", "")
+    if not customer["market"]["confirmed"]:
+        raise PanelError("the market is not confirmed: run affordability and get the user's approval first")
     if rnd == "task" and not screens_list(d):
         raise PanelError("the task test needs screenshots in %s/screens/: without them personas cannot judge "
                          "the flow and every answer is meaningless. Add screens, then re-run" % d)
-    if price and not currency:
-        raise PanelError("customer.json needs 'currency' (e.g. \"USD\") when product.md states a price")
     qa_text = ""
     if rnd == "2":
         answered = parse_answers_md(d)
@@ -559,14 +737,6 @@ def cmd_briefs(d, rnd, wave):
 
 
 # ── answers ─────────────────────────────────────────────────────────────────────
-def _is_int(v):
-    return isinstance(v, int) and not isinstance(v, bool)
-
-
-def _is_num(v):
-    return isinstance(v, (int, float)) and not isinstance(v, bool)
-
-
 def _reactions_problem(fr, features):
     if not isinstance(fr, list):
         return "'feature_reactions' must be a list"
@@ -631,9 +801,12 @@ def _field_problem(a, key, kind):
     return None if isinstance(v, str) and v.strip() else "'%s' is empty" % key
 
 
-def decision_problem(a, dtype, rnd, price):
+def decision_problem(a, dtype, rnd, has_price):
     """Checks the role-specific part of a round 1 or round 2 answer."""
-    for key, kind in FIELDS[dtype][rnd]:
+    fields = list(FIELDS[dtype][rnd])
+    if rnd == "1" and dtype == "buyer" and has_price:
+        fields = COMPREHENSION_FIELDS + fields
+    for key, kind in fields:
         p = _field_problem(a, key, kind)
         if p:
             return p
@@ -642,21 +815,48 @@ def decision_problem(a, dtype, rnd, price):
             return "'changed_mind' must be true or false"
         if a.get("changed_mind") and not str(a.get("why_changed", "")).strip():
             return "changed_mind is true but 'why_changed' is empty"
-    if rnd == "1" and dtype == "buyer" and price:
+    if rnd == "1" and dtype == "buyer" and has_price:
         for k in PRICE_KEYS:
             if not _is_num(a.get(k)) or a[k] <= 0:
                 return "'%s' must be a positive number" % k
     return None
 
 
-def answer_problem(a, pid, features, rnd, dtype, price=False):
+def comprehension_problem(a, card, price):
+    """The persona's own statement of the price and of its income must match the card (within 10%)."""
+    amt, per = parse_money(a.get("i_pay"))
+    if amt is None:
+        return "i_pay has no amount"
+    if per is None:
+        return "i_pay has no period: say per month, per year or one-time"
+    expected = float(price["amount"])
+    if abs(amt - expected) > MONEY_TOLERANCE * expected:
+        return "i_pay amount %s does not match the price %s" % (fmt_money(amt), fmt_money(expected))
+    if per != price["period"]:
+        return "i_pay period '%s' does not match the price period '%s'" % (per, price["period"])
+    amt, per = parse_money(a.get("my_income"))
+    if amt is None:
+        return "my_income has no amount"
+    if per == "once":
+        return "my_income must be a monthly figure, not a one-time amount"
+    if per == "year":
+        amt = amt / 12.0
+    inc = float(card["income"])
+    if abs(amt - inc) > MONEY_TOLERANCE * inc:
+        return "my_income %s does not match your household income %s" % (fmt_money(amt), fmt_money(inc))
+    return None
+
+
+def answer_problem(a, card, features, rnd, price=None):
+    pid = card["id"]
     if not isinstance(a, dict):
         return "JSON is not an object"
     if a.get("id") != pid:
         return "id is %r, expected %s" % (a.get("id"), pid)
     if rnd == "task":
         return _tasks_problem(a.get("tasks"), features)
-    p = decision_problem(a, dtype, rnd, price)
+    dtype = card["decision_type"]
+    p = decision_problem(a, dtype, rnd, price is not None)
     if p:
         return p
     p = _reactions_problem(a.get("feature_reactions"), features)
@@ -666,10 +866,12 @@ def answer_problem(a, pid, features, rnd, dtype, price=False):
         q = a.get("questions")
         if not isinstance(q, list) or len(q) > 3 or not all(isinstance(x, str) and x.strip() for x in q):
             return "'questions' must be a list of at most 3 non-empty strings"
+    if rnd == "1" and price is not None:
+        return comprehension_problem(a, card, price)
     return None
 
 
-def answer_problem_file(path, card, features, rnd, price=False):
+def answer_problem_file(path, card, features, rnd, price=None):
     if not os.path.exists(path):
         return "missing"
     try:
@@ -677,7 +879,7 @@ def answer_problem_file(path, card, features, rnd, price=False):
             a = json.load(fh)
     except (json.JSONDecodeError, UnicodeDecodeError):
         return "not valid JSON"
-    return answer_problem(a, card["id"], features, rnd, card["decision_type"], price)
+    return answer_problem(a, card, features, rnd, price)
 
 
 def load_round(d, rnd):
@@ -725,7 +927,7 @@ def cmd_save(d, rnd, pid, text):
         obj, _ = json.JSONDecoder().raw_decode(text[start:])
     except json.JSONDecodeError as e:
         raise PanelError("the reply's JSON does not parse: %s" % e)
-    p = answer_problem(obj, pid, features, rnd, card["decision_type"], persona_price(card, price))
+    p = answer_problem(obj, card, features, rnd, persona_price(card, price))
     if p:
         raise PanelError("%s's answer is not valid (%s); re-run its brief instead" % (pid, p))
     path = answer_path(d, rnd, pid)
@@ -735,8 +937,8 @@ def cmd_save(d, rnd, pid, text):
 
 def cmd_status(d):
     _, _, features, cards, price = project_state(d)
-    print("%d personas (seed %s), price questions: %s" % (
-        len(cards), load_cards(d)[1], "on for buyers" if price else "off (no price in product.md)"))
+    print("%d personas (seed %s), price: %s" % (
+        len(cards), load_cards(d)[1], period_phrase(price) if price else "none (no price questions)"))
     for rnd in ROUNDS:
         ok = sum(1 for c in cards if answer_problem_file(
             answer_path(d, rnd, c["id"]), c, features, rnd, persona_price(c, price)) is None)
@@ -748,6 +950,7 @@ def main(argv=None):
     common.add_argument("--dir", default="launch", help="project folder (default: launch)")
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("affordability", parents=[common])
     i = sub.add_parser("init", parents=[common])
     i.add_argument("--n", type=int, default=None, help="number of personas (default 100)")
     i.add_argument("--quick", action="store_true", help="20 personas, for a first look")
@@ -764,7 +967,9 @@ def main(argv=None):
     sub.add_parser("status", parents=[common])
     a = ap.parse_args(argv)
     try:
-        if a.cmd == "init":
+        if a.cmd == "affordability":
+            cmd_affordability(a.dir)
+        elif a.cmd == "init":
             n = a.n if a.n is not None else (QUICK_N if a.quick else DEFAULT_N)
             if n < 1:
                 raise PanelError("--n must be at least 1")

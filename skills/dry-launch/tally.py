@@ -331,6 +331,36 @@ def section_tasks(L, tasks_rows, features):
     return stuck_at
 
 
+def section_bands(L, r1, r2, customer):
+    """Buy rate and price range for each income band. Buyers only."""
+    L += ["## By income band", "",
+          "Monthly net household income, from the market's bands. Buyers only.", "",
+          "| band | monthly net income | buyers | round 1 buy | round 2 buy | price range (round 1) |",
+          "| --- | --- | ---: | --- | --- | --- |"]
+    price = panel.price_of(customer)
+    for b in customer["market"]["income_bands"]:
+        g1 = [r for r in buyers(r1) if r["income_band"] == b["name"]]
+        g2 = [r for r in buyers(r2) if r["income_band"] == b["name"]] if r2 else []
+        if g1:
+            rate1 = "%s" % pct(sum(1 for r in g1 if r["buys"]) / len(g1))
+        else:
+            rate1 = "-"
+        rate2 = "%s" % pct(sum(1 for r in g2 if r["buys"]) / len(g2)) if g2 else "-"
+        rng = "not enough answers"
+        if price:
+            result, _ = pricing.from_answers(g1, panel.PRICE_KEYS)
+            if result:
+                lo, hi = result["range"]
+                rng = "%s to %s %s" % (fmt_amt(lo), fmt_amt(hi), customer["market"]["currency"])
+        lo_m, hi_m = b["monthly"]
+        L.append("| %s | %s-%s %s | %d | %s | %s | %s |" % (
+            b["name"], fmt_amt(lo_m), fmt_amt(hi_m), customer["market"]["currency"], len(g1), rate1, rate2, rng))
+
+
+def fmt_amt(x):
+    return "{:,.0f}".format(x)
+
+
 def section_price(L, r1):
     result, dropped = pricing.from_answers(buyers(r1), panel.PRICE_KEYS)
     L += ["## Price range (Van Westendorp, simulated, buyers only)", ""]
@@ -385,12 +415,16 @@ def cmd_results(d):
         raise panel.PanelError("no round 1 answers yet")
     r2, sk2 = panel.load_round(d, "2")
     tasks_rows, sk3 = panel.load_round(d, "task")
-    _, product, features = panel.load_inputs(d)
-    prices_shown = panel.price_enabled(product)
+    customer, _, features = panel.load_inputs(d)
+    prices_shown = panel.price_of(customer) is not None
     latest = r2 if r2 else r1
     stats = feature_stats(features, latest)
 
-    L = ["# Press conference report", ""]
+    m = customer["market"]
+    L = ["# Press conference report", "",
+         "**Market:** %s · currency %s · income: %s (%d), monthly net household income, by band · "
+         "confirmed: %s" % (m["country"], m["currency"], m["income_source"], m["income_year"],
+                            "yes" if m["confirmed"] else "no"), ""]
     b1 = buyers(r1)
     y1 = sum(r["buys"] for r in b1)
     L.append("**Round 1, buyers:** %d buy · %d pass (%s of %d buyers)." % (
@@ -402,6 +436,8 @@ def cmd_results(d):
             y2, len(b2) - y2, pct(buy_rate(r2) or 0), len(b2)))
     L.append("")
     section_roles(L, r1, r2)
+    L.append("")
+    section_bands(L, r1, r2, customer)
     L.append("")
     section_features(L, stats)
     L.append("")

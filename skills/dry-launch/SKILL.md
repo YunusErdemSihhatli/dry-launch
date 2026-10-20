@@ -1,13 +1,12 @@
 ---
 name: dry-launch
 description: >-
-  Pre-launch dry run. Presents the app to simulated target users in a press-conference
-  format. Each persona hears the keynote, rates every feature, answers the questions for
-  its role (buyer, user or influencer), and asks questions. The user answers the questions,
-  personas re-decide in round 2, and a task test shows where they get stuck on screens.
-  Use when the user says "dry launch", "press conference", "test my launch", "what would
-  personas think", "test the keynote", or "collect feature feedback".
-argument-hint: "[init | keynote | pressroom | round2 | task | results] [--n 100 | --quick]"
+  Pre-launch dry run for any country. Presents the app to simulated target users in a press-conference
+  format. Each persona hears the keynote, rates every feature, answers the questions for its role (buyer,
+  user or influencer), and asks questions. The user answers, personas re-decide in round 2, and a task test
+  shows where they get stuck on screens. Use when the user says "dry launch", "press conference", "test my
+  launch", "what would personas think", "test the keynote", or "collect feature feedback".
+argument-hint: "[affordability | init | keynote | pressroom | round2 | task | results] [--n 100 | --quick]"
 ---
 
 # dry-launch
@@ -16,34 +15,34 @@ Present a launch to target users before it ships, without spending money. Person
 rate each feature, answer the questions for their role, and ask questions. The user answers, personas
 re-decide, and a task test shows where the flow breaks on the screens.
 
+The skill works for any country. Never assume a market: ask for it.
+
 ## Tools
 
 All bookkeeping goes through the scripts in this folder. Standard library only, no network.
-`panel.py` deals personas, writes briefs, and checks answers. `pricing.py` computes the Van Westendorp
-range. `tally.py` prepares the clustering inputs and writes the report.
+`panel.py` deals personas, writes briefs, checks answers, and prints the affordability table.
+`pricing.py` computes the Van Westendorp range. `tally.py` prepares the clustering inputs and writes the report.
 
 ```bash
-python3 "${CLAUDE_SKILL_DIR}/panel.py" <init|briefs|check|save|status> --dir launch ...
+python3 "${CLAUDE_SKILL_DIR}/panel.py" <affordability|init|briefs|check|save|status> --dir launch ...
 python3 "${CLAUDE_SKILL_DIR}/tally.py" <cluster prepare|cluster apply|results> --dir launch ...
 ```
 
-`${CLAUDE_SKILL_DIR}` is this skill's folder, wherever it was installed (plugin or copied folder).
+`${CLAUDE_SKILL_DIR}` is this skill's folder, wherever it was installed.
 
-The project folder is `launch/`, inside the product repo being launched (not inside the dry-launch repo).
-Create it from the example, which ships with the repo next to `skills/`:
+The project folder is `launch/`, inside the product repo being launched. Create it from the example:
 
 ```bash
 cp -R "${CLAUDE_SKILL_DIR}/../../launch.example" launch && mkdir -p launch/qa launch/screens
 ```
 
-If the example is not there (the skill was copied without the repo), ask the user to fill `launch/`
-by hand, following the file shapes in the README.
+If the example is not there, fill `launch/` by hand, following the shapes in the README.
 
 ```
 launch/
-  customer.json    audience: roles, each with a decision_type, and the currency
-  product.md       keynote text; if it states a price, buyers get the price questions
-  features.json    each feature: id, name, what, steps (the steps are the task checkpoints)
+  customer.json    market (country, currency, income bands, confirmed), price, roles, objections
+  product.md       keynote text
+  features.json    each feature: id, name, what, steps (steps are the task checkpoints)
   screens/         screenshots of the app (required for the task test)
   personas/        generated cards (cards.json + P01.md ...)
   briefs/          one brief per persona and round
@@ -52,53 +51,66 @@ launch/
   report.md        the report
 ```
 
-## Step 0: inputs
+## Step 0: market, income, and price
 
-`customer.json`, `product.md`, `features.json` must be filled in. The scripts stop on any `TODO`, on a
-feature with no `steps`, and on a role without `decision_type`. Each role has one of:
-
-- `buyer`: pays for it. Answers buys, reason, and the four price questions when the product states a price.
-- `user`: uses it but does not pay. Answers wants_it (1-5), would_ask_parent, would_keep_using_after_week.
-- `influencer`: is asked by buyers. Answers would_recommend (1-5) and concerns.
-
-Every role rates every feature. The purchase rate and the price range come from buyers only. Set
-`currency` (for example "USD") in `customer.json`; the script requires it when the product states a price.
-
-A role can split its personas into income tiers, each with a share and a monthly net range:
+Everything about money is in `customer.json`. Income is always **monthly net household income**, in the
+market's currency. Price is structured:
 
 ```json
-"income_tiers": [
-  {"name": "low", "share": 0.3, "income": [500, 1500]},
-  {"name": "middle", "share": 0.5, "income": [3000, 5000]},
-  {"name": "high", "share": 0.2, "income": [10000, 20000]}
-]
+"price": {"amount": 39, "period": "once"}
 ```
 
-The shares are relative within the role. A role with no tiers uses its single `income` range.
+`period` is `month`, `year` or `once`, and it is required. Without a price, the product has no price
+questions and the affordability step is skipped.
 
-Income in `customer.json` is **monthly net take-home**, in the same `currency` as the product price.
-Take the ranges from current local data for the market you are launching in (average and minimum
-wages, job-board salary data), not from guesses. The skill works in any country, so never assume
-one market. Set `"price"` (a number, in the same currency) and the brief states the price as a share
-of each buyer's monthly income, computed by the script. The example ranges and price are placeholders.
+**Market.** If `customer.json` has no market, or its `country` or `currency` is a placeholder, ask the user
+which country and currency to use. Then find the household income distribution for that country:
 
-The user writes their own product. You may help draft the template, but do not invent their product.
-Show a short summary (roles and their types, features, whether a price is stated) and ask for corrections
-first. The wrong audience makes the whole panel wrong.
+1. Look for official statistics first: the national statistics office, then the World Bank or OECD.
+2. Use `WebSearch` to find the current household income distribution (quintile or decile limits, median,
+   average). Prefer a table from the official source. Record the source and the year.
+3. Turn the distribution into bands. The default is three bands by percentile (`low` 0-40, `middle` 40-80,
+   `high` 80-100) with shares 0.4, 0.4 and 0.2. Set each band's `monthly` range as **monthly net** household
+   income. If the source is gross, convert it to net and say so in `income_source`. Do not guess; if you
+   cannot find a figure, say so and ask the user.
+4. Write `market` in `customer.json`: `country`, `currency`, `income_source` (the source name, URL and
+   what was converted), `income_year`, `income_bands`, and `confirmed: false`.
+
+**Affordability approval.** Before any init, run:
+
+```bash
+python3 "${CLAUDE_SKILL_DIR}/panel.py" affordability --dir launch
+```
+
+It prints the price, each band's monthly range, its share of personas, and the price as a percentage of
+income at the low and high ends of each band. Show this table to the user, with the source and year, and
+ask for approval. Only after they approve, set `market.confirmed` to `true`. `init` refuses to run otherwise.
+
+If the approved table shows a price above 15% of monthly income for most buyers, say so. `init` also
+prints this warning.
+
+**Roles.** Each role has a `decision_type` (`buyer`, `user`, `influencer`). A role may override the market's
+band shares with `band_shares`, for example `{"low": 0.1, "middle": 0.5, "high": 0.4}`. Each role may also
+have `current_spend`, a short phrase on what the persona already spends on this kind of thing. Buyers also
+answer the price questions and an understanding check (see step 2).
+
+The user writes their own product. You may help draft the template, but do not invent the product. Show a
+short summary (roles, features, price, market) and ask for corrections before the affordability step.
 
 ## Step 1: init (persona cards)
 
-Ask the user how many personas to deal before running init. Offer 20 (quick first look), 50, 100
-(default), and 200, or any number they type. Note the cost: each persona is one subagent call per round,
-and the task test adds another call per persona, so 100 personas is about 200 to 300 calls in total.
+Ask the user how many personas to deal. Offer 20 (quick first look), 50, 100 (default), and 200, or any
+number they type. Note the cost: each persona is one subagent call per round, and the task test adds
+another call per persona, so 100 personas is about 200 to 300 calls in total.
 
 ```bash
 python3 "${CLAUDE_SKILL_DIR}/panel.py" init --dir launch --n <their number> --seed 7
 python3 "${CLAUDE_SKILL_DIR}/panel.py" init --dir launch --quick      # 20 personas
-python3 "${CLAUDE_SKILL_DIR}/panel.py" init --dir launch               # 100 personas, the default
+python3 "${CLAUDE_SKILL_DIR}/panel.py" init --dir launch              # 100 personas, the default
 ```
 
-The same customer, n, and seed always give the same cards. Cards are readable at `launch/personas/P01.md`.
+The same customer, n, and seed always give the same cards. Roles are split first, exactly, then each
+role's personas are split across the income bands. Cards are readable at `launch/personas/P01.md`.
 n must be at least the number of roles so each role appears.
 
 ## Step 2: keynote (round 1)
@@ -122,8 +134,15 @@ python3 "${CLAUDE_SKILL_DIR}/panel.py" check --dir launch --round 1
 ```
 
 Re-run `briefs --round 1` for anything missing or invalid and dispatch only those. If a subagent prints its
-JSON instead of writing the file, file it with `python3 "${CLAUDE_SKILL_DIR}/panel.py" save --dir launch --round 1 P07 < reply.txt`.
+JSON instead of writing the file, file it with
+`python3 "${CLAUDE_SKILL_DIR}/panel.py" save --dir launch --round 1 P07 < reply.txt`.
 Never write a brief or a persona's answer yourself.
+
+**Understanding check (buyers with a price).** A buyer must state, in its own words, the price (`i_pay`)
+with its amount and period, and its household income (`my_income`). `check` reads the amount and period from
+those words and compares them with the card and the price, within 10%. A mismatch makes the answer invalid,
+and it is dispatched again. The brief already gives the persona the price as a share of its income; the
+script computes that share, not the model.
 
 ## Step 3: pressroom (questions and themes)
 
@@ -184,8 +203,9 @@ reports being stuck at the first checkpoint, which is meaningless.
 python3 "${CLAUDE_SKILL_DIR}/panel.py" briefs --dir launch --round task
 ```
 
-Dispatch as in step 2 (in waves of 10 for large panels), then `check --round task`. Be clear with the user about the limit: the persona sees
-screenshots and text, so this tests the wording and the visible flow, not the running app.
+Dispatch as in step 2 (in waves of 10 for large panels), then `check --round task`. Be clear with the user
+about the limit: the persona sees screenshots and text, so this tests the wording and the visible flow, not
+the running app.
 
 ## Step 6: results
 
@@ -193,17 +213,18 @@ screenshots and text, so this tests the wording and the visible flow, not the ru
 python3 "${CLAUDE_SKILL_DIR}/tally.py" results --dir launch
 ```
 
-This writes `launch/report.md`. Give the user the report, with these sections in mind:
+This writes `launch/report.md`. Its header names the market, the currency, the income source and year.
+Give the user the report, with these sections in mind:
 
 1. Buy rate for buyers, by round. Then the by-role table, where users and influencers show their own metrics.
-2. The feature table. Each recommendation (keep / improve / drop) is derived from the scores, and the report
+2. Buy rate and price range by income band. Buyers only.
+3. The feature table. Each recommendation (keep / improve / drop) is derived from the scores, and the report
    states the thresholds. Include anything people said is missing.
-3. The three weakest features, one quote each.
-4. Why buyers pass and why they buy.
-5. Themes in free-text answers, clustered.
-6. Round 2: how many changed their mind, and what convinced them.
-7. Task test: which checkpoints people got stuck on.
-8. Price range, if the product states a price (buyers only).
+4. The three weakest features, one quote each.
+5. Why buyers pass and why they buy.
+6. Themes in free-text answers, clustered.
+7. Round 2: how many changed their mind, and what convinced them.
+8. Task test: which checkpoints people got stuck on.
 9. Warnings: simulated personas, the buy rate is an upper bound, and the three riskiest assumptions to verify
    with real users.
 
@@ -214,6 +235,7 @@ decision is the user's.
 
 - Personas do not see each other. A brief never contains another persona's answer.
 - Never write answers yourself. Missing or invalid answers are dispatched again.
+- Do not run init before the market is approved and `confirmed` is true.
 - Do not start round 2 until the questions are answered.
 - Run the task test only with screenshots present.
 - Before dispatching more than 30 subagents, tell the user the count and suggest accept-edits mode

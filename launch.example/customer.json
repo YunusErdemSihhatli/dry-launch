@@ -1,6 +1,54 @@
 {
   "product": "A block-coding toy that teaches children to program.",
-  "currency": "USD",
+  "market": {
+    "country": "US",
+    "currency": "USD",
+    "income_source": "U.S. Census Bureau household income quintile limits (2024 income year), monthly net estimate. APPROXIMATE: verify against the current Census table and set confirmed to true only after review.",
+    "income_year": 2024,
+    "confirmed": false,
+    "income_bands": [
+      {
+        "name": "low",
+        "percentile": [
+          0,
+          40
+        ],
+        "share": 0.4,
+        "monthly": [
+          1200,
+          4300
+        ]
+      },
+      {
+        "name": "middle",
+        "percentile": [
+          40,
+          80
+        ],
+        "share": 0.4,
+        "monthly": [
+          4300,
+          11400
+        ]
+      },
+      {
+        "name": "high",
+        "percentile": [
+          80,
+          100
+        ],
+        "share": 0.2,
+        "monthly": [
+          11400,
+          25000
+        ]
+      }
+    ]
+  },
+  "price": {
+    "amount": 39,
+    "period": "once"
+  },
   "roles": [
     {
       "name": "Buying parent",
@@ -12,32 +60,7 @@
       ],
       "decision": "You pay for it and decide whether it comes into the house.",
       "how": "Looks for safety, screen time limits and real learning value. Reads reviews.",
-      "income_tiers": [
-        {
-          "name": "low",
-          "share": 0.3,
-          "income": [
-            500,
-            1500
-          ]
-        },
-        {
-          "name": "middle",
-          "share": 0.5,
-          "income": [
-            3000,
-            5000
-          ]
-        },
-        {
-          "name": "high",
-          "share": 0.2,
-          "income": [
-            10000,
-            20000
-          ]
-        }
-      ]
+      "current_spend": "pays for one children's learning app, about 10 USD a month"
     },
     {
       "name": "Child user",
@@ -47,7 +70,6 @@
         7,
         12
       ],
-      "income": null,
       "decision": "Your parent decides. You can ask, you cannot buy it yourself.",
       "how": "Wants it to be fun and quick to start. Gets bored with slow tutorials."
     },
@@ -60,33 +82,7 @@
         42
       ],
       "decision": "You do not buy it for your child's friend. Other parents ask you what to get.",
-      "how": "Talks to other parents, trusts what they have seen work at home.",
-      "income_tiers": [
-        {
-          "name": "low",
-          "share": 0.3,
-          "income": [
-            500,
-            1500
-          ]
-        },
-        {
-          "name": "middle",
-          "share": 0.5,
-          "income": [
-            3000,
-            5000
-          ]
-        },
-        {
-          "name": "high",
-          "share": 0.2,
-          "income": [
-            10000,
-            20000
-          ]
-        }
-      ]
+      "how": "Talks to other parents, trusts what they have seen work at home."
     }
   ],
   "objections": [
@@ -99,44 +95,5 @@
     "plays games on a tablet in the evening",
     "goes to the park on weekends",
     "is already paying for two other kids' apps"
-  ],
-  "names": [
-    "Ayşe",
-    "Mehmet",
-    "Elif",
-    "Emre",
-    "Zeynep",
-    "Can",
-    "Selin",
-    "Burak",
-    "Derya",
-    "Kaan",
-    "Merve",
-    "Oğuz",
-    "Ece",
-    "Arda",
-    "Nazlı",
-    "Tolga",
-    "Işık",
-    "Deniz",
-    "Yiğit",
-    "Pınar",
-    "Cem",
-    "Gizem",
-    "Berk",
-    "Seda",
-    "Onur",
-    "Sude",
-    "Ali",
-    "Büşra",
-    "Hakan",
-    "Ebru",
-    "Furkan",
-    "Dilara",
-    "Murat",
-    "Esra",
-    "Serkan",
-    "Gül"
-  ],
-  "price": 39
+  ]
 }

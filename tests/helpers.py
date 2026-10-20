@@ -26,11 +26,17 @@ def read_text(path):
         return fh.read()
 
 
-def make_project():
-    """Returns (tmp_root, launch_dir). Call shutil.rmtree(tmp_root) when done."""
+def make_project(confirm=True):
+    """Copy the example into a temp dir. confirm=True marks the market as approved, as init requires.
+    Returns (tmp_root, launch_dir). Call shutil.rmtree(tmp_root) when done."""
     tmp = tempfile.mkdtemp(prefix="dry-launch-test-")
     dst = os.path.join(tmp, "launch")
     shutil.copytree(EXAMPLE, dst)
+    if confirm:
+        p = os.path.join(dst, "customer.json")
+        c = read_json(p)
+        c["market"]["confirmed"] = True
+        write_json(p, c)
     return tmp, dst
 
 
@@ -42,7 +48,18 @@ def feature_reactions(features, value=4, complexity=2, missing=""):
     ]
 
 
-def r1_answer(pid, features, dtype="buyer", buys=True, price=True):
+def price_text(price):
+    """A persona's own wording of the price, as a person would say it."""
+    amount = "%d" % price["amount"] if float(price["amount"]).is_integer() else str(price["amount"])
+    cur = price.get("_currency", "USD")
+    return {"month": "%s %s per month" % (amount, cur),
+            "year": "%s %s per year" % (amount, cur),
+            "once": "%s %s as a one-time payment" % (amount, cur)}[price["period"]]
+
+
+def r1_answer(pid, features, dtype="buyer", buys=True, price=None, income=None):
+    """A valid round 1 answer. For a buyer with a price, pass the persona's price (dict with amount, period,
+    _currency) and its income, so the comprehension statements match the card."""
     a = {"id": pid, "feature_reactions": feature_reactions(features, value=4 if buys else 2),
          "would_change_my_mind": "a cheaper price", "questions": ["How long does the battery last?"]}
     if dtype == "buyer":
@@ -50,7 +67,8 @@ def r1_answer(pid, features, dtype="buyer", buys=True, price=True):
                  reason="because I want it" if buys else "too expensive for now",
                  top_objection="battery life")
         if price:
-            a.update(price_too_cheap=500, price_bargain=900, price_expensive=1700, price_too_expensive=2400)
+            a.update(i_pay=price_text(price), my_income="%d %s a month" % (income, price.get("_currency", "USD")),
+                     price_too_cheap=5, price_bargain=20, price_expensive=35, price_too_expensive=60)
     elif dtype == "user":
         a.update(wants_it=4 if buys else 2, would_ask_parent=buys, would_keep_using_after_week=buys)
     else:
