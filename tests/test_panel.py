@@ -141,6 +141,29 @@ class BriefTests(unittest.TestCase):
         self.assertEqual(len(re.findall(r'"feature": "F1"', text)), 1)
         self.assertEqual(len(re.findall(r'"feature": "F2"', text)), 1)
 
+    def test_brief_tone_is_neutral(self):
+        panel.cmd_briefs(self.d, "1", 10)
+        text = self.brief("1", self.by_type["buyer"]["id"])
+        self.assertIn("Both yes and no are useful answers", text)
+        self.assertNotIn("Politeness", text)
+
+    def test_money_line_is_buyer_only(self):
+        panel.cmd_briefs(self.d, "1", 10)
+        buyer = self.brief("1", self.by_type["buyer"]["id"])
+        user = self.brief("1", self.by_type["user"]["id"])
+        self.assertIn("your own money", buyer)
+        self.assertNotIn("your own money", user)
+        self.assertIn("whether you would actually play with it", user)
+
+    def test_custom_names_list_is_used(self):
+        p = os.path.join(self.d, "customer.json")
+        c = read_json(p)
+        c["names"] = ["Zara", "Ilo"]
+        write_json(p, c)
+        panel.cmd_init(self.d, 4, 7, True)
+        names = {x["name"] for x in panel.load_cards(self.d)[0]}
+        self.assertEqual(names, {"Zara", "Ilo", "Zara 2", "Ilo 2"})
+
     def test_brief_only_names_its_own_persona(self):
         panel.cmd_briefs(self.d, "1", 10)
         text = self.brief("1", "P03")

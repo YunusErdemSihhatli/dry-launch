@@ -83,6 +83,11 @@ DESCRIPTIONS = {
     "would_recommend": "a number 1 to 5: how likely you are to recommend it to someone who might buy it",
     "concerns": "what you would warn someone about, in your own voice",
 }
+THINKING_LINE = {
+    "buyer": "Think about your own life and your own money, not the product in the abstract.",
+    "user": "Think about your own life and whether you would actually play with it, not the product in the abstract.",
+    "influencer": "Think about your own life and the people you talk to, not the product in the abstract.",
+}
 ROLE_HELP = {
     "buyer": "You are the one who pays. Your answers are about buying it.",
     "user": "You would use it, but you do not pay for it. Your answers are about wanting it and whether you "
@@ -107,7 +112,7 @@ TASK_SCHEMA = """{
 PERSONA_HEAD = """You are at a press conference where a product is being launched. First you listen to the
 keynote; then, like anyone in the room, you may ask questions. Nobody is steering you. This is a
 pre-launch dry run: the team wants to see a real person's reaction before spending money.
-Be honest. If you are not interested, say you would not buy it. Politeness is not useful here.
+Both yes and no are useful answers. Say what you would really do in your situation.
 """
 
 BRIEF_R1 = PERSONA_HEAD + """
@@ -130,7 +135,7 @@ Personality: {temper}.
 {screens_line}
 Rules:
 - Do not assume anything the keynote does not say. Ask about gaps as questions.
-- Think about your own life and your own money, not the product in the abstract.
+- {thinking_line}
 - Give a reaction for every feature. Do not skip any.
 - value: how much this feature is worth to you. complexity: how hard it looks to use.
 
@@ -329,7 +334,7 @@ def deal(customer, n, seed):
     for r, k in zip(customer["roles"], quota(customer["roles"], n)):
         roles += [r] * k
     rng.shuffle(roles)
-    names = NAMES[:]
+    names = (customer.get("names") or NAMES)[:]
     rng.shuffle(names)
     habits = customer.get("habits") or []
     cards = []
@@ -450,6 +455,7 @@ def build_brief(d, rnd, c, features, product, currency, qa_text="", prev_text=""
             income_line=("Your yearly income is about %s %s.\n" % ("{:,}".format(c["income"]), currency)) if c["income"] else "",
             habit_line=("Your day: %s.\n" % c["habit"]) if c["habit"] else "",
             price_block=PRICE_BLOCK.format(currency=currency) if price else "",
+            thinking_line=THINKING_LINE[c["decision_type"]],
             schema=schema_text(pid, c["decision_type"], "1", features, price), **common)
     if rnd == "2":
         return BRIEF_R2.format(
