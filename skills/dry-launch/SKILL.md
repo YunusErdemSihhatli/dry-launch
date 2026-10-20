@@ -7,7 +7,7 @@ description: >-
   personas re-decide in round 2, and a task test shows where they get stuck on screens.
   Use when the user says "dry launch", "press conference", "test my launch", "what would
   personas think", "test the keynote", or "collect feature feedback".
-argument-hint: "[init | keynote | pressroom | round2 | task | results] [--n 5]"
+argument-hint: "[init | keynote | pressroom | round2 | task | results] [--n 100 | --quick]"
 ---
 
 # dry-launch
@@ -23,18 +23,21 @@ All bookkeeping goes through the scripts in this folder. Standard library only, 
 range. `tally.py` prepares the clustering inputs and writes the report.
 
 ```bash
-DL="$HOME/.claude/skills/dry-launch"
-python3 "$DL/panel.py" <init|briefs|check|save|status> --dir launch ...
-python3 "$DL/tally.py" <cluster prepare|cluster apply|results> --dir launch ...
+python3 "${CLAUDE_SKILL_DIR}/panel.py" <init|briefs|check|save|status> --dir launch ...
+python3 "${CLAUDE_SKILL_DIR}/tally.py" <cluster prepare|cluster apply|results> --dir launch ...
 ```
+
+`${CLAUDE_SKILL_DIR}` is this skill's folder, wherever it was installed (plugin or copied folder).
 
 The project folder is `launch/`, inside the product repo being launched (not inside the dry-launch repo).
-Create it from the example, which is in the dry-launch repo:
+Create it from the example, which ships with the repo next to `skills/`:
 
 ```bash
-REPO="$(dirname "$(readlink -f "$DL")")"
-cp -R "$REPO/launch.example" launch && mkdir -p launch/qa launch/screens
+cp -R "${CLAUDE_SKILL_DIR}/../../launch.example" launch && mkdir -p launch/qa launch/screens
 ```
+
+If the example is not there (the skill was copied without the repo), ask the user to fill `launch/`
+by hand, following the file shapes in the README.
 
 ```
 launch/
@@ -67,18 +70,23 @@ first. The wrong audience makes the whole panel wrong.
 
 ## Step 1: init (persona cards)
 
+Ask the user how many personas to deal before running init. Offer 20 (quick first look), 50, 100
+(default), and 200, or any number they type. Note the cost: each persona is one subagent call per round,
+and the task test adds another call per persona, so 100 personas is about 200 to 300 calls in total.
+
 ```bash
-python3 "$DL/panel.py" init --dir launch --n 5 --seed 7
+python3 "${CLAUDE_SKILL_DIR}/panel.py" init --dir launch --n <their number> --seed 7
+python3 "${CLAUDE_SKILL_DIR}/panel.py" init --dir launch --quick      # 20 personas
+python3 "${CLAUDE_SKILL_DIR}/panel.py" init --dir launch               # 100 personas, the default
 ```
 
 The same customer, n, and seed always give the same cards. Cards are readable at `launch/personas/P01.md`.
-Use `--n 30` for a fuller panel. With a few roles, n must be at least the number of roles so each role
-appears.
+n must be at least the number of roles so each role appears.
 
 ## Step 2: keynote (round 1)
 
 ```bash
-python3 "$DL/panel.py" briefs --dir launch --round 1
+python3 "${CLAUDE_SKILL_DIR}/panel.py" briefs --dir launch --round 1
 ```
 
 The script writes one brief per persona and lists them in waves of 10. For each wave, send **one message
@@ -92,11 +100,11 @@ with one Agent call per persona in that wave**:
 Do not start the next wave before the current one finishes. Then:
 
 ```bash
-python3 "$DL/panel.py" check --dir launch --round 1
+python3 "${CLAUDE_SKILL_DIR}/panel.py" check --dir launch --round 1
 ```
 
 Re-run `briefs --round 1` for anything missing or invalid and dispatch only those. If a subagent prints its
-JSON instead of writing the file, file it with `python3 "$DL/panel.py" save --dir launch --round 1 P07 < reply.txt`.
+JSON instead of writing the file, file it with `python3 "${CLAUDE_SKILL_DIR}/panel.py" save --dir launch --round 1 P07 < reply.txt`.
 Never write a brief or a persona's answer yourself.
 
 ## Step 3: pressroom (questions and themes)
@@ -105,8 +113,8 @@ Two kinds of free text are clustered by meaning, which is a judgement call, so a
 The script prepares the inputs and checks the result:
 
 ```bash
-python3 "$DL/tally.py" cluster prepare --dir launch --what questions
-python3 "$DL/tally.py" cluster prepare --dir launch --what themes
+python3 "${CLAUDE_SKILL_DIR}/tally.py" cluster prepare --dir launch --what questions
+python3 "${CLAUDE_SKILL_DIR}/tally.py" cluster prepare --dir launch --what themes
 ```
 
 - `questions`: the questions personas asked at the press conference.
@@ -125,8 +133,8 @@ absolute paths:
 Then apply both:
 
 ```bash
-python3 "$DL/tally.py" cluster apply --dir launch --what questions --top 10
-python3 "$DL/tally.py" cluster apply --dir launch --what themes
+python3 "${CLAUDE_SKILL_DIR}/tally.py" cluster apply --dir launch --what questions --top 10
+python3 "${CLAUDE_SKILL_DIR}/tally.py" cluster apply --dir launch --what themes
 ```
 
 `apply` refuses a cluster file that misses an item, uses an unknown ref, or puts an item in two clusters.
@@ -139,7 +147,7 @@ round 2.
 ## Step 4: round 2
 
 ```bash
-python3 "$DL/panel.py" briefs --dir launch --round 2
+python3 "${CLAUDE_SKILL_DIR}/panel.py" briefs --dir launch --round 2
 ```
 
 Each persona reads its own round-1 answer and the team's answers, then re-decides. Dispatch in the same wave
@@ -155,16 +163,16 @@ The script **refuses to run this round without screenshots** in `launch/screens/
 reports being stuck at the first checkpoint, which is meaningless.
 
 ```bash
-python3 "$DL/panel.py" briefs --dir launch --round task
+python3 "${CLAUDE_SKILL_DIR}/panel.py" briefs --dir launch --round task
 ```
 
-Dispatch as in step 2, then `check --round task`. Be clear with the user about the limit: the persona sees
+Dispatch as in step 2 (in waves of 10 for large panels), then `check --round task`. Be clear with the user about the limit: the persona sees
 screenshots and text, so this tests the wording and the visible flow, not the running app.
 
 ## Step 6: results
 
 ```bash
-python3 "$DL/tally.py" results --dir launch
+python3 "${CLAUDE_SKILL_DIR}/tally.py" results --dir launch
 ```
 
 This writes `launch/report.md`. Give the user the report, with these sections in mind:

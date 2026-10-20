@@ -9,7 +9,7 @@ It is for finding objections and weak spots early. It does not predict real sale
 
 ## How it works
 
-1. **init**: deal persona cards from your target audience. Each role has a `decision_type`: `buyer`, `user`,
+1. **init**: deal persona cards from your target audience. Default 100 personas; `--quick` gives 20, `--n` any number. Each role has a `decision_type`: `buyer`, `user`,
    or `influencer`. The same seed always gives the same cards.
 2. **keynote (round 1)**: each persona reads the keynote and rates every feature (understood, value,
    complexity, comment, what is missing). Then it answers its role's questions and asks up to three questions.
@@ -27,19 +27,34 @@ deal cards, write briefs, check answers, and tally them.
 
 ## Install
 
-```bash
-git clone <this repo> ~/projects/dry-launch
-ln -s ~/projects/dry-launch/skill ~/.claude/skills/dry-launch
+As a Claude Code plugin (recommended):
+
+```
+/plugin marketplace add YunusErdemSihhatli/dry-launch
+/plugin install dry-launch@dry-launch
 ```
 
-Standard library Python 3 only. No network, no API keys.
+Plugin skills are namespaced, so they show up as `/dry-launch:dry-launch`. To test a local checkout before
+it is on GitHub, add the folder instead: `/plugin marketplace add ~/projects/dry-launch`.
+
+Or copy the skill folder for plain `/dry-launch` naming:
+
+```bash
+git clone https://github.com/YunusErdemSihhatli/dry-launch.git
+cp -r dry-launch/skills/dry-launch ~/.claude/skills/
+```
+
+Do not do both: a copied skill and the plugin would both load.
+
+Standard library Python 3 only. No network, no API keys. Run the tests with
+`python3 -m unittest discover -s tests -p "test_*.py"`.
 
 ## Start a launch (in your product repo)
 
 The `launch/` folder is created **inside the product repo you are launching**, not in this repo. From the product repo:
 
 ```bash
-cp -R ~/projects/dry-launch/launch.example launch && mkdir -p launch/qa launch/screens
+cp -R <dry-launch repo>/launch.example launch && mkdir -p launch/qa launch/screens
 ```
 
 Then edit `launch/customer.json`, `launch/product.md`, and `launch/features.json`, and put screenshots of the app
@@ -62,7 +77,8 @@ price range.
 ## Layout
 
 ```
-skill/
+.claude-plugin/   marketplace.json and plugin.json, so the repo installs as a plugin
+skills/dry-launch/
   SKILL.md        the instructions Claude Code follows
   panel.py        deal personas, write briefs, check and save answers
   pricing.py      Van Westendorp price range (adapted from founder-skill, MIT)

@@ -40,6 +40,34 @@ class DealTests(unittest.TestCase):
             shutil.rmtree(tmp)
 
 
+class PersonaCountTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp, self.d = make_project()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp)
+
+    def test_default_is_100_and_quick_is_20(self):
+        self.assertEqual((panel.DEFAULT_N, panel.QUICK_N), (100, 20))
+        panel.main(["init", "--dir", self.d])
+        self.assertEqual(len(panel.load_cards(self.d)[0]), 100)
+        panel.main(["init", "--dir", self.d, "--quick", "--force"])
+        self.assertEqual(len(panel.load_cards(self.d)[0]), 20)
+
+    def test_any_n_is_accepted(self):
+        for n in (5, 50, 200):
+            panel.main(["init", "--dir", self.d, "--n", str(n), "--force"])
+            self.assertEqual(len(panel.load_cards(self.d)[0]), n)
+
+    def test_n_below_role_count_is_refused_and_keeps_answers(self):
+        panel.main(["init", "--dir", self.d, "--n", "5", "--force"])
+        marker = panel.answer_path(self.d, "1", "P01")
+        with open(marker, "w", encoding="utf-8") as fh:
+            fh.write("{}")
+        self.assertEqual(panel.main(["init", "--dir", self.d, "--n", "2", "--force"]), 2)
+        self.assertTrue(os.path.exists(marker))
+
+
 class InputTests(unittest.TestCase):
     def setUp(self):
         self.tmp, self.d = make_project()

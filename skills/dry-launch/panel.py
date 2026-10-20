@@ -2,7 +2,7 @@
 """dry-launch panel: deals persona cards and runs the bookkeeping for every round.
 Standard library only, no network.
 
-    python3 panel.py init   [--dir launch] [--n 30] [--seed 7] [--force]
+    python3 panel.py init   [--dir launch] [--n 100 | --quick] [--seed 7] [--force]
     python3 panel.py briefs [--dir launch] --round 1|2|task [--wave 10]
     python3 panel.py check  [--dir launch] --round 1|2|task
     python3 panel.py save   [--dir launch] --round 1|2|task ID < reply.txt
@@ -33,6 +33,8 @@ import shutil
 import sys
 
 ROUNDS = ("1", "2", "task")
+DEFAULT_N = 100
+QUICK_N = 20
 DECISION_TYPES = ("buyer", "user", "influencer")
 REASONS = ["price", "need", "habit", "trust", "quality", "convenience", "timing", "values", "other"]
 TEMPERS = [
@@ -371,6 +373,8 @@ def card_md(c, currency):
 
 def cmd_init(d, n, seed, force):
     customer, _, _ = load_inputs(d)
+    if n < len(customer["roles"]):
+        raise PanelError("n=%d is less than the %d roles: each role needs at least one persona" % (n, len(customer["roles"])))
     ans = os.path.join(d, "answers")
     if os.path.isdir(ans) and any(os.scandir(ans)) and not force:
         raise PanelError("answers already exist; dealing again deletes them: pass --force")
@@ -694,7 +698,8 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
     i = sub.add_parser("init", parents=[common])
-    i.add_argument("--n", type=int, default=30)
+    i.add_argument("--n", type=int, default=None, help="number of personas (default 100)")
+    i.add_argument("--quick", action="store_true", help="20 personas, for a first look")
     i.add_argument("--seed", type=int, default=7)
     i.add_argument("--force", action="store_true")
     b = sub.add_parser("briefs", parents=[common])
@@ -709,9 +714,10 @@ def main(argv=None):
     a = ap.parse_args(argv)
     try:
         if a.cmd == "init":
-            if a.n < 1:
+            n = a.n if a.n is not None else (QUICK_N if a.quick else DEFAULT_N)
+            if n < 1:
                 raise PanelError("--n must be at least 1")
-            cmd_init(a.dir, a.n, a.seed, a.force)
+            cmd_init(a.dir, n, a.seed, a.force)
         elif a.cmd == "briefs":
             cmd_briefs(a.dir, a.round, a.wave)
         elif a.cmd == "check":

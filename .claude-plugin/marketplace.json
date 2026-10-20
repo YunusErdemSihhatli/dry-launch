@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "dry-launch",
+  "description": "Pre-launch dry run: simulated target users hear your keynote, rate features, answer press-conference questions and walk task checkpoints.",
+  "owner": {
+    "name": "PS Tech Lab"
+  },
+  "plugins": [
+    {
+      "name": "dry-launch",
+      "description": "A press-conference dry run for your app: buyer, user and influencer personas, two rounds, a task test on screenshots, and a report with the risks to verify.",
+      "source": "./",
+      "category": "productivity",
+      "homepage": "https://github.com/YunusErdemSihhatli/dry-launch"
+    }
+  ]
+}

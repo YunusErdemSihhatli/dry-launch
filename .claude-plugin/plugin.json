@@ -1,0 +1,12 @@
+{
+  "name": "dry-launch",
+  "description": "Pre-launch dry run: simulated buyer, user and influencer personas hear your keynote, rate features, answer press-conference questions, and walk task checkpoints on your screenshots.",
+  "version": "0.1.0",
+  "author": {
+    "name": "PS Tech Lab"
+  },
+  "homepage": "https://github.com/YunusErdemSihhatli/dry-launch",
+  "repository": "https://github.com/YunusErdemSihhatli/dry-launch",
+  "license": "MIT",
+  "keywords": ["claude-code", "claude-skills", "launch", "user-research", "pricing", "simulation"]
+}
