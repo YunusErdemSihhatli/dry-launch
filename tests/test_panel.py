@@ -171,7 +171,7 @@ class PriceTests(unittest.TestCase):
         buyer = next(x for x in cards_of(self.d) if x["decision_type"] == "buyer")
         text = read_text(os.path.join(self.d, "briefs", "r1", buyer["id"] + ".md"))
         self.assertNotIn("price_too_cheap", text)
-        self.assertNotIn("i_pay", text)
+        self.assertNotIn("price_as_i_understand_it", text)
 
     def test_yearly_price_is_spread_over_12_months_in_the_share(self):
         price = {"amount": 120, "period": "year", "_currency": "USD"}
@@ -224,13 +224,13 @@ class ComprehensionTests(unittest.TestCase):
         self.assertIsNone(self.problem(self.answer()))
 
     def test_wrong_amount_fails(self):
-        self.assertIn("does not match the price", self.problem(self.answer(i_pay="90 USD as a one-time payment")))
+        self.assertIn("does not match the price", self.problem(self.answer(price_as_i_understand_it="90 USD as a one-time payment")))
 
     def test_wrong_period_fails(self):
-        self.assertIn("period", self.problem(self.answer(i_pay="39 USD per month")))
+        self.assertIn("period", self.problem(self.answer(price_as_i_understand_it="39 USD per month")))
 
     def test_missing_period_fails(self):
-        self.assertIn("no period", self.problem(self.answer(i_pay="39 USD")))
+        self.assertIn("no period", self.problem(self.answer(price_as_i_understand_it="39 USD")))
 
     def test_income_outside_ten_percent_fails(self):
         wrong = int(self.buyer["income"] * 1.5)
@@ -256,9 +256,9 @@ class ComprehensionTests(unittest.TestCase):
 
     def test_schema_lists_comprehension_fields_for_priced_buyers_only(self):
         s = panel.schema_text(self.buyer["id"], "buyer", "1", self.features, self.price)
-        self.assertIn('"i_pay"', s)
+        self.assertIn('"price_as_i_understand_it"', s)
         self.assertIn('"my_income"', s)
-        self.assertNotIn('"i_pay"', panel.schema_text("P09", "user", "1", self.features, None))
+        self.assertNotIn('"price_as_i_understand_it"', panel.schema_text("P09", "user", "1", self.features, None))
 
     def test_parse_money_formats(self):
         self.assertEqual(panel.parse_money("1,200 USD per month"), (1200.0, "month"))
@@ -296,10 +296,16 @@ class BriefTests(unittest.TestCase):
         self.assertNotIn('"buys"', self.brief("1", self.by_type["influencer"]["id"]))
         self.assertIn('"buys"', self.brief("1", self.by_type["buyer"]["id"]))
 
-    def test_income_line_has_currency_and_monthly_net(self):
+    def test_buyer_income_line_has_currency_and_monthly_net(self):
         panel.cmd_briefs(self.d, "1", 10)
-        c = self.by_type["user"]
+        c = self.by_type["buyer"]
         self.assertRegex(self.brief("1", c["id"]), r"monthly net income is about [\d,]+ USD")
+
+    def test_user_brief_has_no_income_number(self):
+        panel.cmd_briefs(self.d, "1", 10)
+        text = self.brief("1", self.by_type["user"]["id"])
+        self.assertNotIn("monthly net income", text)
+        self.assertNotRegex(text, r"\d,\d{3} USD")
 
     def test_thinking_line_depends_on_role(self):
         panel.cmd_briefs(self.d, "1", 10)

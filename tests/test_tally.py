@@ -105,6 +105,22 @@ class ProjectTests(unittest.TestCase):
         tally.cmd_results(self.d)
         self.assertIn("**Round 1, buyers:** 0 buy", self.report())
 
+    def test_misunderstood_buyers_leave_the_buy_rate(self):
+        for c in self.cards:
+            ans = self.r1_for(c, buys=True)
+            if c["decision_type"] == "buyer" and c["id"] == next(x["id"] for x in self.cards if x["decision_type"] == "buyer"):
+                ans["misunderstood"] = True
+            self.write("1", ans)
+        tally.cmd_results(self.d)
+        text = self.report()
+        self.assertIn("**Round 1, buyers:** 3 buy · 0 pass", text)
+        self.assertIn("**Comprehension:** 1 of 4 buyers misread the price or their income (25%)", text)
+
+    def test_comprehension_line_is_zero_when_nobody_misread(self):
+        self.fill_r1()
+        tally.cmd_results(self.d)
+        self.assertIn("**Comprehension:** 0 of ", self.report())
+
     def test_report_header_names_market_and_source(self):
         self.fill_r1()
         tally.cmd_results(self.d)

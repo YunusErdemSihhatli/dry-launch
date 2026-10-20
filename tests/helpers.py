@@ -67,7 +67,7 @@ def r1_answer(pid, features, dtype="buyer", buys=True, price=None, income=None):
                  reason="because I want it" if buys else "too expensive for now",
                  top_objection="battery life")
         if price:
-            a.update(i_pay=price_text(price), my_income="%d %s a month" % (income, price.get("_currency", "USD")),
+            a.update(price_as_i_understand_it=price_text(price), my_income="%d %s a month" % (income, price.get("_currency", "USD")),
                      price_too_cheap=5, price_bargain=20, price_expensive=35, price_too_expensive=60)
     elif dtype == "user":
         a.update(wants_it=4 if buys else 2, would_ask_parent=buys, would_keep_using_after_week=buys)

@@ -60,7 +60,7 @@
       ],
       "decision": "You pay for it and decide whether it comes into the house.",
       "how": "Looks for safety, screen time limits and real learning value. Reads reviews.",
-      "current_spend": "pays for one children's learning app, about 10 USD a month"
+      "current_spend": "pays for one children's learning app, about 10 {currency} a month"
     },
     {
       "name": "Child user",
@@ -71,7 +71,23 @@
         12
       ],
       "decision": "Your parent decides. You can ask, you cannot buy it yourself.",
-      "how": "Wants it to be fun and quick to start. Gets bored with slow tutorials."
+      "how": "Wants it to be fun and quick to start. Gets bored with slow tutorials.",
+      "habits": [
+        "plays games on a tablet in the evening",
+        "goes to the park on weekends",
+        "shows friends the games he or she likes at school"
+      ],
+      "objections": [
+        "I get bored fast",
+        "My friends don't have it, so who would I play with?",
+        "Is it only for little kids?",
+        "Can I make something that is really mine?"
+      ],
+      "tempers": [
+        "easily bored, wants quick wins",
+        "competitive, wants to beat friends",
+        "shy, prefers building alone"
+      ]
     },
     {
       "name": "Friend with a child who owns one",
@@ -82,7 +98,16 @@
         42
       ],
       "decision": "You do not buy it for your child's friend. Other parents ask you what to get.",
-      "how": "Talks to other parents, trusts what they have seen work at home."
+      "how": "Talks to other parents, trusts what they have seen work at home.",
+      "objections": [
+        "My child already has one and stopped using it after a month",
+        "Is the battery good enough for a trip?",
+        "I would want to see it working at a real kitchen table before I recommend it"
+      ],
+      "habits": [
+        "has a child who already uses a similar toy",
+        "talks with other parents at school pickup"
+      ]
     }
   ],
   "objections": [
@@ -95,5 +120,37 @@
     "plays games on a tablet in the evening",
     "goes to the park on weekends",
     "is already paying for two other kids' apps"
+  ],
+  "names": [
+    "Emma",
+    "Liam",
+    "Olivia",
+    "Noah",
+    "Ava",
+    "Ethan",
+    "Sophia",
+    "Mason",
+    "Isabella",
+    "William",
+    "Mia",
+    "James",
+    "Amelia",
+    "Benjamin",
+    "Harper",
+    "Lucas",
+    "Evelyn",
+    "Henry",
+    "Abigail",
+    "Alexander",
+    "Emily",
+    "Daniel",
+    "Charlotte",
+    "Michael",
+    "Ella",
+    "Jacob",
+    "Grace",
+    "Samuel",
+    "Chloe",
+    "David"
   ]
 }

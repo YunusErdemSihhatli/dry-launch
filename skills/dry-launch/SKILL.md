@@ -89,9 +89,16 @@ ask for approval. Only after they approve, set `market.confirmed` to `true`. `in
 If the approved table shows a price above 15% of monthly income for most buyers, say so. `init` also
 prints this warning.
 
+**Names.** Ask the market's common first names for the `names` list in `customer.json`: 30 names, women and men
+mixed, for that country. The script uses its built-in English list and prints a note if `names` is missing.
+
 **Roles.** Each role has a `decision_type` (`buyer`, `user`, `influencer`). A role may override the market's
 band shares with `band_shares`, for example `{"low": 0.1, "middle": 0.5, "high": 0.4}`. Each role may also
-have `current_spend`, a short phrase on what the persona already spends on this kind of thing. Buyers also
+have `current_spend` (use `{currency}` for the market currency), a short phrase on what the persona already
+spends on this kind of thing. A role may give its own `habits`, `objections` and `tempers` lists; without them
+the global lists are used. A feature may set `"for": ["buyer"]` to be scored only from those roles.
+
+Users never see their household's income number; the brief gives a sentence for the band instead. Buyers also
 answer the price questions and an understanding check (see step 2).
 
 The user writes their own product. You may help draft the template, but do not invent the product. Show a
@@ -138,11 +145,18 @@ JSON instead of writing the file, file it with
 `python3 "${CLAUDE_SKILL_DIR}/panel.py" save --dir launch --round 1 P07 < reply.txt`.
 Never write a brief or a persona's answer yourself.
 
-**Understanding check (buyers with a price).** A buyer must state, in its own words, the price (`i_pay`)
-with its amount and period, and its household income (`my_income`). `check` reads the amount and period from
-those words and compares them with the card and the price, within 10%. A mismatch makes the answer invalid,
-and it is dispatched again. The brief already gives the persona the price as a share of its income; the
-script computes that share, not the model.
+**Understanding check (every buyer, when the product has a price).** Each buyer states, in its own words, the
+price of the product (`price_as_i_understand_it`, with amount, currency and period) and its household income
+(`my_income`). This is about understanding, not about buying: a buyer who says no still states the price.
+`check` compares both with the card and the price, within 10%.
+
+- **First misread:** the answer is invalid and the persona is dispatched again.
+- **Second misread:** the answer is kept and marked `misunderstood`. Its feature scores still count, but it is
+  left out of the buy rate and the price range.
+
+The report says how many buyers misread the price or income, and that a high share means the price may be
+unclear in the keynote. The brief gives the persona the price as a share of its income; the script computes
+that share, not the model.
 
 ## Step 3: pressroom (questions and themes)
 

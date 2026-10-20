@@ -42,17 +42,32 @@ def recommend(stats):
 
 
 def feature_stats(features, rows):
-    """Aggregate each feature's reactions across all personas, whatever their role."""
+    """Aggregate each feature's reactions. A feature with "for" is scored only from those roles; without it,
+    from every role. Per-role average values are kept for the breakdown table."""
     out = []
     for f in features:
-        reacts = [(r, x) for r in rows for x in r["feature_reactions"] if x["feature"] == f["id"]]
+        all_reacts = [(r, x) for r in rows for x in r["feature_reactions"] if x["feature"] == f["id"]]
+        if not all_reacts:
+            continue
+        per_role = {}
+        for dtype in panel.DECISION_TYPES:
+            vals = [x["value"] for r, x in all_reacts if r["decision_type"] == dtype]
+            per_role[dtype] = sum(vals) / len(vals) if vals else None
+        allowed = f.get("for") or list(panel.DECISION_TYPES)
+        reacts = [(r, x) for r, x in all_reacts if r["decision_type"] in allowed]
         if not reacts:
+            out.append({"feature": f, "n": 0, "scored_for": allowed, "per_role": per_role,
+                        "recommendation": "n/a (no %s in this panel)" % "/".join(allowed), "reacts": [],
+                        "missing": [], "missing_share": 0.0, "avg_value": 0.0, "avg_complexity": 0.0,
+                        "understood": 0.0})
             continue
         n = len(reacts)
         missing = [(r["id"], x["missing"].strip()) for r, x in reacts if x.get("missing", "").strip()]
         st = {
             "feature": f,
             "n": n,
+            "scored_for": allowed,
+            "per_role": per_role,
             "avg_value": sum(x["value"] for _, x in reacts) / n,
             "avg_complexity": sum(x["complexity"] for _, x in reacts) / n,
             "understood": sum(1 for _, x in reacts if x["understood"]) / n,
@@ -188,7 +203,9 @@ def quote(s):
 
 
 def buyers(rows):
-    return [r for r in rows if r["decision_type"] == "buyer"]
+    """Buyers whose answers count for buy rates and price ranges. Misunderstood buyers are excluded
+    here; their feature scores still count (feature_stats uses every persona)."""
+    return [r for r in rows if r["decision_type"] == "buyer" and not r.get("misunderstood")]
 
 
 def buy_rate(rows):
@@ -212,6 +229,17 @@ def role_metric(rows):
     return "would recommend %.1f/5" % (sum(r["would_recommend"] for r in rows) / n)
 
 
+def misread_line(L, r1):
+    """How many buyers misread the price or their income. A high share points at the keynote."""
+    all_buyers = [r for r in r1 if r["decision_type"] == "buyer"]
+    if not all_buyers:
+        return
+    n = sum(1 for r in all_buyers if r.get("misunderstood"))
+    L.append("**Comprehension:** %d of %d buyers misread the price or their income (%s). Misread buyers are kept "
+             "for feature scores but left out of the buy rate and the price range. If this is high, the price may "
+             "be unclear in the keynote." % (n, len(all_buyers), pct(n / len(all_buyers))))
+
+
 def section_roles(L, r1, r2):
     L += ["## By role", "",
           "The purchase rate is for buyers only. Users and influencers are scored on their own questions.", "",
@@ -225,18 +253,28 @@ def section_roles(L, r1, r2):
 
 def section_features(L, stats):
     L += ["## Features", "",
-          "Recommendation is derived from the persona scores of all roles (keep: avg value >= %.1f, avg complexity "
-          "<= %.1f, understood >= %d%%; drop: avg value <= %.1f; otherwise improve)." % (
-              KEEP_VALUE, KEEP_COMPLEXITY, KEEP_UNDERSTOOD * 100, DROP_VALUE), "",
-          "| feature | value | complexity | understood | said something missing | recommendation |",
-          "| --- | ---: | ---: | ---: | ---: | --- |"]
+          "Recommendation is derived from the persona scores of the roles each feature is for (keep: avg value >= %.1f, "
+          "avg complexity <= %.1f, understood >= %d%%; drop: avg value <= %.1f; otherwise improve). A feature with no "
+          "\"for\" is scored from all roles." % (KEEP_VALUE, KEEP_COMPLEXITY, KEEP_UNDERSTOOD * 100, DROP_VALUE), "",
+          "| feature | scored from | value | complexity | understood | said something missing | recommendation |",
+          "| --- | --- | ---: | ---: | ---: | ---: | --- |"]
     for s in stats:
         rec = s["recommendation"]
         if s["missing_share"] >= MISSING_SHARE:
             rec += ", add what is missing"
-        L.append("| %s %s | %.1f | %.1f | %s | %s (%d) | **%s** |" % (
-            s["feature"]["id"], s["feature"]["name"], s["avg_value"], s["avg_complexity"],
+        if s["n"] == 0:
+            L.append("| %s %s | %s | - | - | - | - | **%s** |" % (
+                s["feature"]["id"], s["feature"]["name"], "/".join(s["scored_for"]), rec))
+            continue
+        L.append("| %s %s | %s | %.1f | %.1f | %s | %s (%d) | **%s** |" % (
+            s["feature"]["id"], s["feature"]["name"], "/".join(s["scored_for"]), s["avg_value"], s["avg_complexity"],
             pct(s["understood"]), pct(s["missing_share"]), len(s["missing"]), rec))
+    L += ["", "### Feature value by role", "",
+          "Average value (1-5) per role, from all personas, whether or not the role is scored for the feature.", "",
+          "| feature | buyer | user | influencer |", "| --- | ---: | ---: | ---: |"]
+    for s_ in stats:
+        cells = ["-" if s_["per_role"][d] is None else "%.1f" % s_["per_role"][d] for d in panel.DECISION_TYPES]
+        L.append("| %s %s | %s |" % (s_["feature"]["id"], s_["feature"]["name"], " | ".join(cells)))
     L += ["", "### Features people say are missing", ""]
     any_missing = False
     for s in stats:
@@ -434,6 +472,8 @@ def cmd_results(d):
         y2 = sum(r["buys"] for r in b2)
         L.append("**Round 2, buyers:** %d buy · %d pass (%s of %d buyers)." % (
             y2, len(b2) - y2, pct(buy_rate(r2) or 0), len(b2)))
+    L.append("")
+    misread_line(L, r1)
     L.append("")
     section_roles(L, r1, r2)
     L.append("")

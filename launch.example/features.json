@@ -19,6 +19,9 @@
         "Open the companion app and sign in",
         "Choose the child's profile",
         "Read this week's summary of programs built"
+      ],
+      "for": [
+        "buyer"
       ]
     }
   ]

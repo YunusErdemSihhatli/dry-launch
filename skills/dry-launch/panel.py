@@ -11,7 +11,7 @@ Standard library only, no network.
 
 Each role in customer.json has a decision_type:
     buyer       pays for it: buys, reason_code, reason, and (if the product has a price) the price questions,
-                plus i_pay and my_income, which are checked against the card
+                plus price_as_i_understand_it and my_income, which are checked against the card
     user        uses it, does not pay: wants_it, would_ask_parent, would_keep_using_after_week
     influencer  is asked by buyers: would_recommend, concerns
 Every persona has a household income drawn from a market income band. Every role rates every feature.
@@ -28,6 +28,7 @@ persona: `save` only files a reply the persona printed.
 
 import argparse
 import glob
+import hashlib
 import json
 import os
 import random
@@ -41,6 +42,8 @@ PRICE_PERIODS = ("month", "year", "once")
 DEFAULT_N = 100
 QUICK_N = 20
 MONEY_TOLERANCE = 0.10          # the persona's stated amounts must be within 10% of the card
+MISREAD_LIMIT = 2                # a buyer who misreads the price this many times is kept, marked misunderstood
+ATTEMPTS_FILE = ".attempts.json"
 AFFORDABILITY_WARN_SHARE = 0.15  # price above this share of monthly income ...
 AFFORDABILITY_WARN_PANEL = 0.50  # ... for more than this share of the buyers: warn at init
 REASONS = ["price", "need", "habit", "trust", "quality", "convenience", "timing", "values", "other"]
@@ -79,13 +82,13 @@ FIELDS = {
     },
 }
 # Buyers who see a price state it back in round 1, so the script can check they understood it.
-COMPREHENSION_FIELDS = [("i_pay", "text"), ("my_income", "text")]
+COMPREHENSION_FIELDS = [("price_as_i_understand_it", "text"), ("my_income", "text")]
 DESCRIPTIONS = {
     "buys": "true or false: would you buy it",
     "reason_code": "one of price / need / habit / trust / quality / convenience / timing / values / other",
     "reason": "why, one or two sentences, in your own voice",
     "top_objection": "what holds you back most right now",
-    "i_pay": "what you would pay for it, in your own words, with the amount, the currency and the period",
+    "price_as_i_understand_it": "the price of this product as you understand it, in your own words, with the amount, the currency and the period (this is about the price, not about whether you would buy it)",
     "my_income": "your household's monthly net income, in your own words, with the amount and the currency",
     "wants_it": "a number 1 to 5: how much you want it",
     "would_ask_parent": "true or false: would you ask someone else to buy it for you",
@@ -287,6 +290,12 @@ def parse_money(text):
     m = re.search(r"\d+(?:[.,]\d+)*", t)
     if m:
         tok = m.group(0)
+        after = t[m.end():]
+        scale = 1.0
+        if re.match(r"\s*(?:k\b|bin\b|thousand\b)", after):
+            scale = 1e3
+        elif re.match(r"\s*(?:m\b|mn\b|million\b|milyon\b)", after):
+            scale = 1e6
         if re.fullmatch(r"\d{1,3}(?:,\d{3})+(?:\.\d+)?", tok):          # 1,200 or 1,200.50 (US style)
             amount = float(tok.replace(",", ""))
         elif re.fullmatch(r"\d{1,3}(?:\.\d{3})+(?:,\d+)?", tok):         # 1.200 or 1.200,50 (TR style)
@@ -295,6 +304,7 @@ def parse_money(text):
             amount = float(re.sub(r"[.,]", "", tok))
         else:                                                              # 1.5 or 1,5
             amount = float(tok.replace(",", "."))
+        amount *= scale
     period = None
     if re.search(r"per year|yearly|a year|annual|/\s*year|\byear\b|\byıl|yılda|yıllık", t):
         period = "year"
@@ -509,7 +519,7 @@ def deal(customer, n, seed):
             "age": rng.randint(int(lo), int(hi)),
             "income": income,
             "income_band": role["band"],
-            "current_spend": role.get("current_spend", ""),
+            "current_spend": role.get("current_spend", "").replace("{currency}", customer["market"]["currency"]),
             "how": role.get("how", ""),
             "decision": role.get("decision", ""),
             "temper": _pick(rng, role.get("tempers") or TEMPERS),
@@ -576,6 +586,9 @@ def cmd_init(d, n, seed, force):
     warn = panel_affordability_warning(cards, price_of(customer))
     if warn:
         print(warn)
+    if not customer.get("names"):
+        print("Note: customer.json has no 'names' list, so the built-in English names are used. For a local "
+              "panel, add 30 common first names for %s (women and men mixed) as \"names\"." % customer["market"]["country"])
 
 
 def cmd_affordability(d):
@@ -649,6 +662,27 @@ def parse_answers_md(d):
     return {k: "\n".join(v).strip() for k, v in out.items() if "\n".join(v).strip()}
 
 
+QUALITATIVE_INCOME = {
+    "low": "Your family is careful with money.",
+    "middle": "Your family can afford some extras.",
+    "high": "Your family rarely worries about money.",
+}
+
+
+def income_phrase(c, customer):
+    """Users never see their household's number: a qualitative sentence for the band instead."""
+    bands = [b["name"] for b in customer["market"]["income_bands"]]
+    name = c["income_band"]
+    if name in QUALITATIVE_INCOME:
+        return QUALITATIVE_INCOME[name]
+    rank = bands.index(name)
+    if rank == 0:
+        return QUALITATIVE_INCOME["low"]
+    if rank == len(bands) - 1:
+        return QUALITATIVE_INCOME["high"]
+    return QUALITATIVE_INCOME["middle"]
+
+
 def affordability_line(c, price):
     """What a persona knows about money: its spend, and for buyers the price as a share of its income."""
     parts = []
@@ -665,8 +699,11 @@ def build_brief(d, rnd, c, features, product, customer, qa_text="", prev_text=""
     price = persona_price(c, price_of(customer))
     pid = c["id"]
     out = os.path.abspath(answer_path(d, rnd, pid))
-    income_line = "Your household's monthly net income is about %s %s.\n" % (
-        "{:,}".format(c["income"]), market["currency"])
+    if c["decision_type"] == "user":
+        income_line = income_phrase(c, customer) + "\n"
+    else:
+        income_line = "Your household's monthly net income is about %s %s.\n" % (
+            "{:,}".format(c["income"]), market["currency"])
     common = dict(name=c["name"], age=c["age"], role=c["role"], how=c["how"], decision=c["decision"],
                   temper=c["temper"], objection=c["objection"], out=out, screens_line=screens_line(d),
                   role_help=ROLE_HELP[c["decision_type"]], product=product, features=feature_text(features),
@@ -824,16 +861,16 @@ def decision_problem(a, dtype, rnd, has_price):
 
 def comprehension_problem(a, card, price):
     """The persona's own statement of the price and of its income must match the card (within 10%)."""
-    amt, per = parse_money(a.get("i_pay"))
+    amt, per = parse_money(a.get("price_as_i_understand_it"))
     if amt is None:
-        return "i_pay has no amount"
+        return "price_as_i_understand_it has no amount"
     if per is None:
-        return "i_pay has no period: say per month, per year or one-time"
+        return "price_as_i_understand_it has no period: say per month, per year or one-time"
     expected = float(price["amount"])
     if abs(amt - expected) > MONEY_TOLERANCE * expected:
-        return "i_pay amount %s does not match the price %s" % (fmt_money(amt), fmt_money(expected))
+        return "price_as_i_understand_it amount %s does not match the price %s" % (fmt_money(amt), fmt_money(expected))
     if per != price["period"]:
-        return "i_pay period '%s' does not match the price period '%s'" % (per, price["period"])
+        return "price_as_i_understand_it period '%s' does not match the price period '%s'" % (per, price["period"])
     amt, per = parse_money(a.get("my_income"))
     if amt is None:
         return "my_income has no amount"
@@ -866,9 +903,56 @@ def answer_problem(a, card, features, rnd, price=None):
         q = a.get("questions")
         if not isinstance(q, list) or len(q) > 3 or not all(isinstance(x, str) and x.strip() for x in q):
             return "'questions' must be a list of at most 3 non-empty strings"
-    if rnd == "1" and price is not None:
+    if rnd == "1" and price is not None and a.get("misunderstood") is not True:
         return comprehension_problem(a, card, price)
     return None
+
+
+def _attempts_path(d):
+    return os.path.join(d, "answers", "r1", ATTEMPTS_FILE)
+
+
+def _load_attempts(d):
+    path = _attempts_path(d)
+    if not os.path.exists(path):
+        return {}
+    with open(path, encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def review_round1(d, card, features, price):
+    """Round 1 buyers with a price: the price and income check, counted per persona.
+
+    Returns None when the answer is valid, "misunderstood" once the persona has misread the price or its income
+    MISREAD_LIMIT times (the answer is kept and flagged), or a problem string for a misread that must be
+    dispatched again. A new version of the file counts as a new attempt; checking the same file twice does not."""
+    path = answer_path(d, "1", card["id"])
+    if card["decision_type"] != "buyer" or price is None or not os.path.exists(path):
+        return answer_problem_file(path, card, features, "1", persona_price(card, price))
+    with open(path, "rb") as fh:
+        raw = fh.read()
+    try:
+        a = json.loads(raw.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return "not valid JSON"
+    p = answer_problem(a, card, features, "1", price)
+    if p is None:
+        return None
+    if a.get("misunderstood") is True or p != comprehension_problem(a, card, price):
+        return p
+    sha = hashlib.sha256(raw).hexdigest()
+    attempts = _load_attempts(d)
+    entry = attempts.get(card["id"], {"count": 0, "sha": None})
+    if entry["sha"] != sha:
+        entry = {"count": entry["count"] + 1, "sha": sha}
+        attempts[card["id"]] = entry
+        write_json(_attempts_path(d), attempts)
+    if entry["count"] < MISREAD_LIMIT:
+        return "misread: %s" % p
+    a["misunderstood"] = True
+    a["misunderstood_reason"] = p
+    write_json(path, a)
+    return "misunderstood"
 
 
 def answer_problem_file(path, card, features, rnd, price=None):
@@ -900,11 +984,19 @@ def load_round(d, rnd):
 
 def cmd_check(d, rnd):
     _, _, features, cards, price = project_state(d)
-    probs = []
+    probs, misunderstood = [], []
     for c in cards:
-        p = answer_problem_file(answer_path(d, rnd, c["id"]), c, features, rnd, persona_price(c, price))
-        if p:
+        if rnd == "1":
+            p = review_round1(d, c, features, price)
+        else:
+            p = answer_problem_file(answer_path(d, rnd, c["id"]), c, features, rnd, persona_price(c, price))
+        if p == "misunderstood":
+            misunderstood.append(c["id"])
+        elif p:
             probs.append((c["id"], p))
+    if misunderstood:
+        print("%d buyer(s) misread the price or their income twice and are kept as misunderstood: %s" % (
+            len(misunderstood), ", ".join(misunderstood)))
     if not probs:
         print("round %s: all answers present and valid" % rnd)
         return 0
@@ -929,6 +1021,13 @@ def cmd_save(d, rnd, pid, text):
         raise PanelError("the reply's JSON does not parse: %s" % e)
     p = answer_problem(obj, card, features, rnd, persona_price(card, price))
     if p:
+        if rnd == "1" and persona_price(card, price) and p == comprehension_problem(obj, card, price):
+            # keep the file so the misread is counted; check decides whether the second try is accepted
+            write_json(answer_path(d, rnd, pid), obj)
+            r = review_round1(d, card, features, price)
+            if r == "misunderstood":
+                return answer_path(d, rnd, pid)
+            raise PanelError("%s misread the price or income (%s); the brief will be dispatched again" % (pid, p))
         raise PanelError("%s's answer is not valid (%s); re-run its brief instead" % (pid, p))
     path = answer_path(d, rnd, pid)
     write_json(path, obj)

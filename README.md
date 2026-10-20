@@ -15,8 +15,9 @@ It is for finding objections and weak spots early. It does not predict real sale
    `decision_type` (`buyer`, `user`, `influencer`). The same seed always gives the same cards.
 2. **keynote (round 1)**: each persona reads the keynote and rates every feature (understood, value,
    complexity, comment, what is missing). Then it answers its role's questions and asks up to three questions.
-   Buyers with a price also state, in their own words, what they would pay and their monthly income. The script
-   checks those statements against the card, and the brief gives the price as a share of their income.
+   Buyers with a price also state, in their own words, the price and their monthly income. The script checks
+   both against the card. A misread is dispatched again once; a second misread is kept but marked, and left out of
+   the buy rate and price range. The report says how many buyers misread the price.
 3. **pressroom**: a Sonnet subagent clusters the questions and the free-text themes by meaning. You get the top
    10 questions and answer them.
 4. **round 2**: each persona re-decides with your answers in hand.
