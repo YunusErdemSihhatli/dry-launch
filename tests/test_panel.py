@@ -40,6 +40,50 @@ class DealTests(unittest.TestCase):
             shutil.rmtree(tmp)
 
 
+class IncomeTierTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp, self.d = make_project()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp)
+
+    def test_tiers_set_income_bounds_and_names(self):
+        panel.cmd_init(self.d, 100, 7, False)
+        cards = panel.load_cards(self.d)[0]
+        bounds = {"low": (500, 1500), "middle": (3000, 5000), "high": (10000, 20000)}
+        for c in cards:
+            if c["decision_type"] in ("buyer", "influencer"):
+                lo, hi = bounds[c["income_tier"]]
+                self.assertTrue(lo <= c["income"] <= hi, (c["id"], c["income"]))
+            else:
+                self.assertIsNone(c["income_tier"])
+
+    def test_tier_shares_are_respected_within_a_role(self):
+        panel.cmd_init(self.d, 100, 7, False)
+        buyers = [c for c in panel.load_cards(self.d)[0] if c["decision_type"] == "buyer"]
+        self.assertEqual(len(buyers), 40)
+        counts = {t: sum(1 for c in buyers if c["income_tier"] == t) for t in ("low", "middle", "high")}
+        self.assertEqual(counts, {"low": 12, "middle": 20, "high": 8})
+
+    def test_role_without_tiers_uses_its_income_range(self):
+        p = os.path.join(self.d, "customer.json")
+        c = read_json(p)
+        c["roles"][0].pop("income_tiers")
+        c["roles"][0]["income"] = [2000, 2500]
+        write_json(p, c)
+        panel.cmd_init(self.d, 10, 7, False)
+        buyers = [x for x in panel.load_cards(self.d)[0] if x["decision_type"] == "buyer"]
+        self.assertTrue(all(2000 <= x["income"] <= 2500 and x["income_tier"] is None for x in buyers))
+
+    def test_bad_tier_is_refused(self):
+        p = os.path.join(self.d, "customer.json")
+        c = read_json(p)
+        c["roles"][0]["income_tiers"][0]["income"] = [5000, 1000]
+        write_json(p, c)
+        with self.assertRaisesRegex(panel.PanelError, "must be \\[low, high\\]"):
+            panel.load_inputs(self.d)
+
+
 class PersonaCountTests(unittest.TestCase):
     def setUp(self):
         self.tmp, self.d = make_project()
@@ -66,6 +110,48 @@ class PersonaCountTests(unittest.TestCase):
             fh.write("{}")
         self.assertEqual(panel.main(["init", "--dir", self.d, "--n", "2", "--force"]), 2)
         self.assertTrue(os.path.exists(marker))
+
+
+class IncomeRoundingTests(unittest.TestCase):
+    def test_small_incomes_are_not_rounded_to_zero(self):
+        self.assertEqual(panel.round_income(500.0), 500)
+        self.assertEqual(panel.round_income(1234.0), 1200)
+        self.assertEqual(panel.round_income(49999.0), 50000)
+        for x in range(500, 20000, 137):
+            self.assertGreater(panel.round_income(float(x)), 0)
+
+
+class AffordabilityTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp, self.d = make_project()
+        panel.cmd_init(self.d, 10, 7, False)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp)
+
+    def test_buyer_brief_states_price_share_of_monthly_income(self):
+        panel.cmd_briefs(self.d, "1", 10)
+        buyer = next(c for c in panel.load_cards(self.d)[0] if c["decision_type"] == "buyer" and c["income"])
+        text = read_text(os.path.join(self.d, "briefs", "r1", buyer["id"] + ".md"))
+        share = 100.0 * read_json(os.path.join(self.d, "customer.json"))["price"] / buyer["income"]
+        self.assertIn("about %.0f%% of your monthly income" % share, text)
+
+    def test_user_brief_has_no_price_share(self):
+        panel.cmd_briefs(self.d, "1", 10)
+        user = next(c for c in panel.load_cards(self.d)[0] if c["decision_type"] == "user")
+        self.assertNotIn("of your monthly income", read_text(os.path.join(self.d, "briefs", "r1", user["id"] + ".md")))
+
+    def test_card_shows_monthly_net_income(self):
+        buyer = next(c for c in panel.load_cards(self.d)[0] if c["decision_type"] == "buyer")
+        self.assertIn("per month, net", read_text(os.path.join(self.d, "personas", buyer["id"] + ".md")))
+
+    def test_bad_price_is_refused(self):
+        p = os.path.join(self.d, "customer.json")
+        c = read_json(p)
+        c["price"] = "1499 TL"
+        write_json(p, c)
+        with self.assertRaisesRegex(panel.PanelError, "'price' must be a positive number"):
+            panel.load_inputs(self.d)
 
 
 class InputTests(unittest.TestCase):
@@ -172,7 +258,7 @@ class BriefTests(unittest.TestCase):
     def test_income_line_carries_currency(self):
         panel.cmd_briefs(self.d, "1", 10)
         with_income = [c for c in self.cards if c["income"]][0]
-        self.assertRegex(self.brief("1", with_income["id"]), r"income is about [\d,.]+ TL")
+        self.assertRegex(self.brief("1", with_income["id"]), r"monthly net income is about [\d,.]+ USD")
 
     def test_priced_product_needs_currency(self):
         p = os.path.join(self.d, "customer.json")

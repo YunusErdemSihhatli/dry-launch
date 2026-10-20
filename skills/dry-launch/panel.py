@@ -248,6 +248,14 @@ def load_inputs(d):
             raise PanelError("every role needs a 'name' and an 'age' [low, high]")
         if r.get("decision_type") not in DECISION_TYPES:
             raise PanelError("role %r needs decision_type: buyer, user or influencer" % r.get("name"))
+        for t in r.get("income_tiers", []) or []:
+            if not t.get("name") or not _is_num(t.get("share")) or t["share"] <= 0:
+                raise PanelError("role %r: every income tier needs a 'name' and a positive 'share'" % r["name"])
+            inc = t.get("income", [])
+            if len(inc) != 2 or not all(_is_num(v) for v in inc) or inc[0] > inc[1]:
+                raise PanelError("role %r tier %r: 'income' must be [low, high] monthly net" % (r["name"], t["name"]))
+    if "price" in customer and not (_is_num(customer["price"]) and customer["price"] > 0):
+        raise PanelError("customer.json 'price' must be a positive number (the product price, for the affordability line)")
     product = read_text(os.path.join(d, "product.md"))
     features = load_json(os.path.join(d, "features.json")).get("features", [])
     if not features:
@@ -327,11 +335,31 @@ def quota(items, n):
     return counts
 
 
+def round_income(x):
+    """Round to 2 significant figures for small incomes (500 must not become 0), to the thousand otherwise."""
+    return int(round(x, -2)) if x < 10000 else int(round(x, -3))
+
+
+def expand_roles(customer):
+    """A role with income_tiers becomes one sub-role per tier, sharing the role's share."""
+    out = []
+    for r in customer["roles"]:
+        tiers = r.get("income_tiers") or []
+        if tiers:
+            for t in tiers:
+                out.append(dict(r, share=float(r.get("share", 1)) * float(t["share"]),
+                                income=t["income"], income_tier=t["name"]))
+        else:
+            out.append(dict(r, income_tier=None))
+    return out
+
+
 def deal(customer, n, seed):
     """Same customer + n + seed gives the same cards, every time."""
     rng = random.Random(seed)
+    expanded = expand_roles(customer)
     roles = []
-    for r, k in zip(customer["roles"], quota(customer["roles"], n)):
+    for r, k in zip(expanded, quota(expanded, n)):
         roles += [r] * k
     rng.shuffle(roles)
     names = (customer.get("names") or NAMES)[:]
@@ -350,7 +378,8 @@ def deal(customer, n, seed):
             "role": role["name"],
             "decision_type": role["decision_type"],
             "age": rng.randint(int(lo), int(hi)),
-            "income": int(round(rng.uniform(float(inc[0]), float(inc[1])), -3)) if inc else None,
+            "income": round_income(rng.uniform(float(inc[0]), float(inc[1]))) if inc else None,
+            "income_tier": role.get("income_tier"),
             "how": role.get("how", ""),
             "decision": role.get("decision", ""),
             "temper": TEMPERS[rng.randrange(len(TEMPERS))],
@@ -361,11 +390,12 @@ def deal(customer, n, seed):
 
 
 def card_md(c, currency):
-    inc = ("Income: about %s %s per year" % ("{:,}".format(c["income"]), currency)) if c["income"] else "Income: none (household budget)"
+    inc = ("Income: about %s %s per month, net" % ("{:,}".format(c["income"]), currency)) if c["income"] else "Income: none (household budget)"
     return "\n".join([
         "# %s · %s (%d)" % (c["id"], c["name"], c["age"]),
         "",
         "- Role: %s (%s)" % (c["role"], c["decision_type"]),
+        "- Income tier: %s" % (c.get("income_tier") or "-"),
         "- %s" % inc,
         "- How they decide: %s" % c["how"],
         "- Who decides: %s" % c["decision"],
@@ -443,7 +473,22 @@ def parse_answers_md(d):
     return {k: "\n".join(v).strip() for k, v in out.items() if "\n".join(v).strip()}
 
 
-def build_brief(d, rnd, c, features, product, currency, qa_text="", prev_text=""):
+def income_lines(c, customer):
+    """Monthly income line, plus the price as a share of it for buyers. Computed here, not guessed by the model."""
+    currency = customer.get("currency", "")
+    if not c["income"]:
+        return ""
+    lines = "Your monthly net income is about %s %s.\n" % ("{:,}".format(c["income"]), currency)
+    price = customer.get("price")
+    if c["decision_type"] == "buyer" and price:
+        share = 100.0 * float(price) / c["income"]
+        lines += "The price is %s %s, about %.0f%% of your monthly income.\n" % (
+            "{:,}".format(int(price)), currency, share)
+    return lines
+
+
+def build_brief(d, rnd, c, features, product, customer, qa_text="", prev_text=""):
+    currency = customer.get("currency", "")
     pid = c["id"]
     out = os.path.abspath(answer_path(d, rnd, pid))
     price = persona_price(c, price_enabled(product))
@@ -452,7 +497,7 @@ def build_brief(d, rnd, c, features, product, currency, qa_text="", prev_text=""
                   role_help=ROLE_HELP[c["decision_type"]], product=product, features=feature_text(features))
     if rnd == "1":
         return BRIEF_R1.format(
-            income_line=("Your yearly income is about %s %s.\n" % ("{:,}".format(c["income"]), currency)) if c["income"] else "",
+            income_line=income_lines(c, customer),
             habit_line=("Your day: %s.\n" % c["habit"]) if c["habit"] else "",
             price_block=PRICE_BLOCK.format(currency=currency) if price else "",
             thinking_line=THINKING_LINE[c["decision_type"]],
@@ -472,7 +517,7 @@ def cmd_briefs(d, rnd, wave):
         raise PanelError("the task test needs screenshots in %s/screens/: without them personas cannot judge "
                          "the flow and every answer is meaningless. Add screens, then re-run" % d)
     if price and not currency:
-        raise PanelError("customer.json needs 'currency' (e.g. \"TL\") when product.md states a price")
+        raise PanelError("customer.json needs 'currency' (e.g. \"USD\") when product.md states a price")
     qa_text = ""
     if rnd == "2":
         answered = parse_answers_md(d)
@@ -499,7 +544,7 @@ def cmd_briefs(d, rnd, wave):
         bp = brief_path(d, rnd, pid)
         os.makedirs(os.path.dirname(bp), exist_ok=True)
         with open(bp, "w", encoding="utf-8") as fh:
-            fh.write(build_brief(d, rnd, c, features, product, currency, qa_text, prev_text))
+            fh.write(build_brief(d, rnd, c, features, product, customer, qa_text, prev_text))
         todo.append((pid, os.path.abspath(bp)))
     if not todo:
         print("every persona has a valid round %s answer" % rnd)

@@ -1,6 +1,6 @@
 {
   "product": "A block-coding toy that teaches children to program.",
-  "currency": "TL",
+  "currency": "USD",
   "roles": [
     {
       "name": "Buying parent",
@@ -10,12 +10,34 @@
         30,
         45
       ],
-      "income": [
-        60000,
-        120000
-      ],
       "decision": "You pay for it and decide whether it comes into the house.",
-      "how": "Looks for safety, screen time limits and real learning value. Reads reviews."
+      "how": "Looks for safety, screen time limits and real learning value. Reads reviews.",
+      "income_tiers": [
+        {
+          "name": "low",
+          "share": 0.3,
+          "income": [
+            500,
+            1500
+          ]
+        },
+        {
+          "name": "middle",
+          "share": 0.5,
+          "income": [
+            3000,
+            5000
+          ]
+        },
+        {
+          "name": "high",
+          "share": 0.2,
+          "income": [
+            10000,
+            20000
+          ]
+        }
+      ]
     },
     {
       "name": "Child user",
@@ -37,12 +59,34 @@
         28,
         42
       ],
-      "income": [
-        60000,
-        120000
-      ],
       "decision": "You do not buy it for your child's friend. Other parents ask you what to get.",
-      "how": "Talks to other parents, trusts what they have seen work at home."
+      "how": "Talks to other parents, trusts what they have seen work at home.",
+      "income_tiers": [
+        {
+          "name": "low",
+          "share": 0.3,
+          "income": [
+            500,
+            1500
+          ]
+        },
+        {
+          "name": "middle",
+          "share": 0.5,
+          "income": [
+            3000,
+            5000
+          ]
+        },
+        {
+          "name": "high",
+          "share": 0.2,
+          "income": [
+            10000,
+            20000
+          ]
+        }
+      ]
     }
   ],
   "objections": [
@@ -93,5 +137,6 @@
     "Esra",
     "Serkan",
     "Gül"
-  ]
+  ],
+  "price": 39
 }

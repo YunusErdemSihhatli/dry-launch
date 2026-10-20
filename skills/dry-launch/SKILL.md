@@ -62,7 +62,25 @@ feature with no `steps`, and on a role without `decision_type`. Each role has on
 - `influencer`: is asked by buyers. Answers would_recommend (1-5) and concerns.
 
 Every role rates every feature. The purchase rate and the price range come from buyers only. Set
-`currency` (for example "TL") in `customer.json`; the script requires it when the product states a price.
+`currency` (for example "USD") in `customer.json`; the script requires it when the product states a price.
+
+A role can split its personas into income tiers, each with a share and a monthly net range:
+
+```json
+"income_tiers": [
+  {"name": "low", "share": 0.3, "income": [500, 1500]},
+  {"name": "middle", "share": 0.5, "income": [3000, 5000]},
+  {"name": "high", "share": 0.2, "income": [10000, 20000]}
+]
+```
+
+The shares are relative within the role. A role with no tiers uses its single `income` range.
+
+Income in `customer.json` is **monthly net take-home**, in the same `currency` as the product price.
+Take the ranges from current local data for the market you are launching in (average and minimum
+wages, job-board salary data), not from guesses. The skill works in any country, so never assume
+one market. Set `"price"` (a number, in the same currency) and the brief states the price as a share
+of each buyer's monthly income, computed by the script. The example ranges and price are placeholders.
 
 The user writes their own product. You may help draft the template, but do not invent their product.
 Show a short summary (roles and their types, features, whether a price is stated) and ask for corrections
